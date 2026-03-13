@@ -164,3 +164,9 @@ astrbot_plugin_grok_web_search/
 ## 许可
 
 AGPL-3.0 License
+
+<div align="center">
+
+**如果这个插件对你有帮助，请给个 ⭐ Star 支持一下！**
+
+</div>

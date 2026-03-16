@@ -197,7 +197,8 @@ async def grok_search(
             user_content.append(
                 {
                     "type": "input_image",
-                    "image_url": f"data:image/*;base64,{img_b64}",
+                    "image_url": f"data:image/jpeg;base64,{img_b64}",
+                    "detail": "high",
                 }
             )
         user_input = user_content

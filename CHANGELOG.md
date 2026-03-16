@@ -2,6 +2,36 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-03-17
+
+### Fixed
+- **重大修复**：使用 xAI Responses API (`/v1/responses`) 替代 Chat Completions API (`/v1/chat/completions`)
+  - 之前的 API 端点不支持真正的联网搜索，导致模型返回幻觉内容
+  - Responses API 是 xAI 官方支持 `web_search` 工具的正确端点
+  - 现在会进行真正的联网搜索，返回准确的实时信息和引用来源
+- 修复 `num_sources_used: 0` 问题，现在可以看到真实的搜索调用 (`web_search_call`)
+
+### Added
+- 新增 `proxy` 配置项：支持 HTTP 代理配置（如 `http://127.0.0.1:7890`）
+  - 代理同时应用于连通性检查和搜索请求
+- 新增 `citations` 返回字段：包含 API 返回的引用来源列表
+
+### Changed
+- 移除 `reasoning_effort` 和 `reasoning_budget_tokens` 参数（Grok 4.20+ 不支持）
+- 更新响应解析逻辑以适配 Responses API 的 `output` 数组格式
+- 从 `annotations` 中提取 `url_citation` 作为引用来源
+
+### Technical Details
+- Responses API 请求格式：
+  ```json
+  {
+    "model": "grok-4.20-beta-0309-non-reasoning",
+    "input": [...],
+    "tools": [{"type": "web_search"}]
+  }
+  ```
+- 推荐使用 `grok-4.20-beta-0309-non-reasoning` 模型以获得最佳联网搜索效果
+
 ## [1.1.0] - 2026-03-13
 
 ### Added

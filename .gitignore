@@ -210,3 +210,9 @@ __marimo__/
 
 CLAUDE.md
 .claude
+
+# Font files (auto-downloaded at runtime)
+font/
+
+# Test images
+test_*

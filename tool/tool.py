@@ -1,0 +1,490 @@
+"""
+Grok 插件共享工具模块
+
+提供共用的参数、工具函数和共享逻辑。
+"""
+
+import asyncio
+import json
+import re
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Any
+
+import aiohttp
+
+# ─── 常量 ───────────────────────────────────────────────
+
+# 默认系统提示词（要求返回 JSON 格式，LLM Tool 和 Skill 使用）
+DEFAULT_JSON_SYSTEM_PROMPT = (
+    "You are a web research assistant with real-time search capabilities. "
+    "Search Strategy: 1) Approach from multiple angles, explore broadly first. "
+    "2) Then dive deep into the most relevant findings. "
+    "3) Prioritize authoritative sources (official docs, Wikipedia, academic papers, reputable media). "
+    "4) Search in English first for breadth, then in Chinese if the query demands it. "
+    "Return ONLY a single JSON object with keys: "
+    "content (string, evidence-backed, concise), "
+    "sources (array of objects with url/title/snippet, ordered by relevance). "
+    "Every claim must be traceable to a source. "
+    "IMPORTANT: Do NOT use Markdown formatting in the content field - use plain text only."
+)
+
+# 网页内容抓取提示词
+FETCH_SYSTEM_PROMPT = (
+    "You are a web content extraction expert. "
+    "Fetch the given URL and convert the page content to well-structured Markdown. "
+    "Rules: "
+    "1) Preserve ALL original text content completely - do NOT summarize or omit anything. "
+    "2) Maintain heading hierarchy (h1-h6 → #-######). "
+    "3) Convert tables, lists, code blocks, links, and images to proper Markdown syntax. "
+    "4) Remove ads, navigation, scripts, and non-content elements. "
+    "5) Prepend a metadata header: source URL, page title, fetch time. "
+    "6) Use UTF-8 encoding. Output ONLY the Markdown document, nothing else."
+)
+
+# 图片格式不支持时的标准错误返回
+IMAGE_UNSUPPORTED_ERROR: dict[str, str] = {
+    "error": "❌ 图片格式不支持。Grok 仅支持 JPEG、PNG、GIF、WebP 格式，请转换后再试。",
+    "error_hint": "用户提供的图片格式无法识别或不受 xAI API 支持，"
+    "请提示用户转换为 JPEG/PNG/GIF/WebP 格式后重试。",
+}
+
+# HTTP 状态码友好错误提示
+HTTP_ERROR_HINTS: dict[int, str] = {
+    400: "请求格式错误，请检查请求体或 extra_body 配置",
+    401: "认证失败，请检查 api_key 是否正确",
+    403: "访问被拒绝，API Key 无权限或已被封禁",
+    404: "模型不存在或 API 端点错误，请检查 model 和 base_url",
+    405: "请求方法不允许，请检查 API 端点配置",
+    415: "请求体格式错误，请确保 Content-Type 为 application/json",
+    422: "请求参数格式无效，请检查 extra_body 配置",
+    429: "请求过于频繁，已触发速率限制，请稍后重试",
+    500: "服务器内部错误",
+    502: "网关错误，API 服务可能暂时不可用",
+    503: "服务暂时不可用，请稍后重试",
+}
+
+# 默认可重试的 HTTP 状态码
+DEFAULT_RETRYABLE_STATUS_CODES: set[int] = {429, 500, 502, 503, 504}
+
+
+# ─── 工具函数 ─────────────────────────────────────────────
+
+
+def get_local_time_info() -> str:
+    """获取本地时间信息，注入到搜索查询中提供时间上下文"""
+    try:
+        local_tz = datetime.now().astimezone().tzinfo
+        local_now = datetime.now(local_tz)
+    except Exception:
+        local_now = datetime.now(timezone.utc)
+
+    weekdays_cn = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    weekday = weekdays_cn[local_now.weekday()]
+
+    return (
+        f"[Current Time Context]\n"
+        f"- Date: {local_now.strftime('%Y-%m-%d')} ({weekday})\n"
+        f"- Time: {local_now.strftime('%H:%M:%S')}\n"
+        f"- Timezone: {local_now.tzname() or 'Local'}\n"
+    )
+
+
+def parse_retry_after(headers: Any) -> float | None:
+    """解析 Retry-After 响应头（支持秒数或 HTTP 日期格式）"""
+    header = None
+    if hasattr(headers, "get"):
+        header = headers.get("Retry-After")
+    if not header:
+        return None
+    header = str(header).strip()
+
+    # 纯数字（秒数）
+    if header.isdigit():
+        return float(header)
+
+    # HTTP 日期格式
+    try:
+        retry_dt = parsedate_to_datetime(header)
+        if retry_dt.tzinfo is None:
+            retry_dt = retry_dt.replace(tzinfo=timezone.utc)
+        delay = (retry_dt - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, delay)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_image(b64_data: str) -> tuple[str, str] | None:
+    """检测图片格式，必要时转换为 API 支持的格式。
+
+    xAI 支持: JPEG, PNG, GIF, WebP
+    不支持的格式（BMP, TIFF 等）会尝试用 PIL 转为 PNG。
+    无法识别的格式返回 None（调用方应报错拒绝）。
+
+    Returns:
+        (mime_type, base64_data) 或 None（格式无法识别）
+    """
+    import base64 as _b64
+
+    _SUPPORTED = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+    # 先用 PIL 尝试（更准确，且能转换格式）
+    try:
+        from io import BytesIO
+
+        from PIL import Image  # noqa: F811
+
+        raw = _b64.b64decode(b64_data)
+        img = Image.open(BytesIO(raw))
+
+        fmt = (img.format or "").upper()
+        _FMT_MAP = {
+            "JPEG": "image/jpeg",
+            "JPG": "image/jpeg",
+            "PNG": "image/png",
+            "GIF": "image/gif",
+            "WEBP": "image/webp",
+        }
+        mime = _FMT_MAP.get(fmt, "")
+
+        if mime in _SUPPORTED:
+            return mime, b64_data
+
+        # 不支持的格式 → 转 PNG
+        buf = BytesIO()
+        img = img.convert("RGBA") if img.mode in ("P", "LA", "PA") else img
+        if img.mode == "RGBA":
+            img.save(buf, format="PNG")
+            new_b64 = _b64.b64encode(buf.getvalue()).decode()
+            return "image/png", new_b64
+        else:
+            img = img.convert("RGB")
+            img.save(buf, format="JPEG", quality=90)
+            new_b64 = _b64.b64encode(buf.getvalue()).decode()
+            return "image/jpeg", new_b64
+    except ImportError:
+        pass  # PIL 不可用，回退到魔数字节检测
+    except Exception:
+        return None  # PIL 解码失败 → 图片损坏或格式不支持
+
+    # 回退：魔数字节检测（不做转换）
+    try:
+        raw_header = _b64.b64decode(b64_data[:64], validate=False)
+    except Exception:
+        return None
+
+    if raw_header[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", b64_data
+    if raw_header[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", b64_data
+    if raw_header[:4] == b"GIF8":
+        return "image/gif", b64_data
+    if raw_header[:4] == b"RIFF" and raw_header[8:12] == b"WEBP":
+        return "image/webp", b64_data
+    return None  # 无法识别 → 拒绝
+
+
+def normalize_api_key(api_key: str) -> str:
+    """过滤占位符 API Key"""
+    api_key = api_key.strip()
+    if not api_key:
+        return ""
+    placeholder = {"YOUR_API_KEY", "API_KEY", "CHANGE_ME", "REPLACE_ME"}
+    if api_key.upper() in placeholder:
+        return ""
+    return api_key
+
+
+def normalize_base_url(base_url: str) -> str:
+    """规范化 Base URL，移除尾部 / 和 /v1"""
+    base_url = base_url.strip().rstrip("/")
+    if base_url.endswith("/v1"):
+        return base_url[: -len("/v1")]
+    return base_url
+
+
+def normalize_base_url_value(base_url: str) -> str:
+    """过滤占位符 Base URL"""
+    base_url = base_url.strip()
+    if not base_url:
+        return ""
+    placeholder = {
+        "HTTPS://YOUR-GROK-ENDPOINT.EXAMPLE",
+        "YOUR_BASE_URL",
+        "BASE_URL",
+        "CHANGE_ME",
+        "REPLACE_ME",
+    }
+    if base_url.upper() in placeholder:
+        return ""
+    return base_url
+
+
+def coerce_json_object(text: str) -> dict[str, Any] | None:
+    """尝试将字符串解析为 JSON 对象"""
+    text = text.strip()
+    if not text:
+        return None
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            value = json.loads(text)
+            return value if isinstance(value, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def extract_urls(text: str) -> list[str]:
+    """从文本中提取 URL"""
+    urls = re.findall(r"https?://[^\s)\]}>\"']+", text)
+    seen: set[str] = set()
+    out: list[str] = []
+    for url in urls:
+        url = url.rstrip(".,;:!?'\"")
+        if url and url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def parse_json_config(value: str) -> tuple[dict[str, Any], str | None]:
+    """解析 JSON 配置字符串
+
+    Returns:
+        (parsed_dict, error_message): 解析结果和错误信息，无错误时 error_message 为 None
+    """
+    if not value or not value.strip():
+        return {}, None
+    try:
+        parsed = json.loads(value)
+        return (parsed if isinstance(parsed, dict) else {}, None)
+    except json.JSONDecodeError as e:
+        return {}, f"JSON 配置解析失败: {e}"
+
+
+# ─── 共享逻辑 ─────────────────────────────────────────────
+
+
+def make_error_result(
+    error: str,
+    started: float,
+    retries: int = 0,
+    raw: str = "",
+) -> dict[str, Any]:
+    """构造标准化错误返回字典"""
+    return {
+        "ok": False,
+        "error": error,
+        "content": "",
+        "sources": [],
+        "raw": raw,
+        "elapsed_ms": int((time.time() - started) * 1000),
+        "retries": retries,
+    }
+
+
+def validate_config(
+    base_url: str,
+    api_key: str,
+    started: float,
+    *,
+    base_url_label: str = "API 端点",
+) -> dict[str, Any] | tuple[str, str]:
+    """验证并规范化 base_url 和 api_key。
+
+    Returns:
+        错误 dict（验证失败）或 (normalized_base_url, normalized_api_key) 元组（成功）
+    """
+    base_url = normalize_base_url_value(base_url)
+    api_key = normalize_api_key(api_key)
+
+    if not base_url:
+        return make_error_result(
+            f"缺少 base_url 配置，请在插件设置中填写{base_url_label}",
+            started,
+        )
+    if not api_key:
+        return make_error_result(
+            "缺少 api_key 配置，请在插件设置中填写 API 密钥",
+            started,
+        )
+    return base_url, api_key
+
+
+def build_headers(
+    api_key: str,
+    extra_headers: dict | None = None,
+) -> dict[str, str]:
+    """构建请求头，合并 extra_headers 并保护关键头"""
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if extra_headers:
+        protected = {"authorization", "content-type"}
+        for key, value in extra_headers.items():
+            if str(key).lower() not in protected:
+                headers[str(key)] = str(value)
+    return headers
+
+
+def merge_extra_body(
+    body: dict[str, Any],
+    extra_body: dict | None,
+    protected_keys: set[str],
+) -> None:
+    """将 extra_body 合并到 body 中，保护关键字段"""
+    if extra_body:
+        for key, value in extra_body.items():
+            if key not in protected_keys:
+                body[key] = value
+
+
+def format_http_error(
+    status: int,
+    error_text: str,
+    started: float,
+    resp_headers: Any = None,
+) -> dict[str, Any]:
+    """格式化 HTTP 错误响应"""
+    hint = HTTP_ERROR_HINTS.get(status, "")
+    error_msg = f"HTTP {status}"
+    if hint:
+        error_msg = f"{error_msg} - {hint}"
+    result = make_error_result(
+        error_msg,
+        started,
+        raw=error_text[:2000] if error_text else "",
+    )
+    # 429 时解析 Retry-After 头
+    if status == 429 and resp_headers is not None:
+        retry_after = parse_retry_after(resp_headers)
+        if retry_after is not None:
+            result["retry_after_seconds"] = retry_after
+    return result
+
+
+def parse_sources_from_message(message: str) -> dict[str, Any]:
+    """从 LLM 响应消息中解析 content 和 sources。
+
+    Returns:
+        {"content": str, "sources": list, "raw": str}
+    """
+    parsed = coerce_json_object(message)
+    sources: list[dict[str, Any]] = []
+    content = ""
+    raw = ""
+
+    if parsed is not None:
+        content = str(parsed.get("content") or "")
+        src = parsed.get("sources")
+        if isinstance(src, list):
+            for item in src:
+                if isinstance(item, dict) and item.get("url"):
+                    sources.append(
+                        {
+                            "url": str(item.get("url")),
+                            "title": str(item.get("title") or ""),
+                            "snippet": str(item.get("snippet") or ""),
+                        }
+                    )
+        if not sources:
+            for url_str in extract_urls(content):
+                sources.append({"url": url_str, "title": "", "snippet": ""})
+    else:
+        raw = message
+        content = message
+        for url_str in extract_urls(message):
+            sources.append({"url": url_str, "title": "", "snippet": ""})
+
+    return {"content": content, "sources": sources, "raw": raw}
+
+
+async def retry_request(
+    do_request: Any,
+    *,
+    session: aiohttp.ClientSession | None,
+    proxy: str | None,
+    max_retries: int,
+    retry_delay: float,
+    retryable_status_codes: set[int] | None,
+    timeout: float,
+    started: float,
+) -> dict[str, Any]:
+    """通用的带重试的请求执行器。
+
+    Args:
+        do_request: async callable(session, proxy) -> dict
+        session: 可选的已有 session
+        proxy: HTTP 代理
+        max_retries: 最大重试次数
+        retry_delay: 重试基础间隔
+        retryable_status_codes: 可重试的 HTTP 状态码
+        timeout: 超时秒数（用于错误消息）
+        started: 起始 time.time()
+
+    Returns:
+        包含 ok/data/error 等字段的字典
+    """
+    if retryable_status_codes is None:
+        retryable_status_codes = DEFAULT_RETRYABLE_STATUS_CODES
+
+    result = None
+    last_error = None
+    retry_count = 0
+
+    for attempt in range(max_retries + 1):
+        try:
+            if session is not None:
+                result = await do_request(session, proxy)
+            else:
+                async with aiohttp.ClientSession() as temp_session:
+                    result = await do_request(temp_session, proxy)
+
+            if result.get("ok"):
+                break
+
+            # 检查是否为可重试的错误
+            error_msg = result.get("error", "")
+            should_retry = any(
+                f"HTTP {code}" in error_msg for code in retryable_status_codes
+            )
+
+            if should_retry and attempt < max_retries:
+                retry_count = attempt + 1
+                # 优先使用 Retry-After 头指定的等待时间
+                wait_time = result.get("retry_after_seconds")
+                if wait_time is None or not isinstance(wait_time, (int, float)):
+                    wait_time = retry_delay * (attempt + 1)
+                await asyncio.sleep(wait_time)
+                continue
+
+            break
+
+        except aiohttp.ClientError as e:
+            last_error = f"网络请求失败: {e}"
+            if attempt < max_retries:
+                retry_count = attempt + 1
+                await asyncio.sleep(retry_delay * (attempt + 1))
+                continue
+            return make_error_result(last_error, started, retry_count)
+        except TimeoutError:
+            last_error = (
+                f"请求超时（{timeout}秒），请检查网络或增加 timeout_seconds 配置"
+            )
+            if attempt < max_retries:
+                retry_count = attempt + 1
+                await asyncio.sleep(retry_delay * (attempt + 1))
+                continue
+            return make_error_result(last_error, started, retry_count)
+
+    if result is None:
+        return make_error_result(last_error or "未知错误", started, retry_count)
+
+    if not result.get("ok") or "data" not in result:
+        result["retries"] = retry_count
+        return result
+
+    result["retries"] = retry_count
+    return result

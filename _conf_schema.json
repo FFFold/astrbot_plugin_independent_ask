@@ -17,10 +17,16 @@
     "hint": "选择要使用的 Grok 模型",
     "default": "grok-4.1-fast"
   },
+  "use_responses_api": {
+    "type": "bool",
+    "description": "使用 /v1/responses 接口",
+    "hint": "⚠️ 仅适用于 xAI 官方 API，非官方/第三方服务对此接口支持不完善，可能导致请求失败",
+    "default": false
+  },
   "base_url": {
     "type": "string",
     "description": "Grok API 端点 URL",
-    "hint": "使用自定义供应商时必填,例如: https://api.example.com"
+    "hint": "使用自定义供应商时必填,例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
   },
   "api_key": {
     "type": "string",
@@ -65,7 +71,7 @@
   "retry_delay": {
     "type": "float",
     "description": "重试间隔时间（秒）",
-    "hint": "控制重试间隔，范围 0.1-5 秒",
+    "hint": "基础重试间隔（线性退避），429 错误时优先使用服务端 Retry-After 头",
     "default": 1.0,
     "slider": {
       "min": 0.1,
@@ -91,6 +97,18 @@
     "hint": "启用后将在搜索结果中显示来源链接",
     "default": false
   },
+  "render_as_image": {
+    "type": "bool",
+    "description": "是否将搜索结果渲染为图片卡片",
+    "hint": "启用后 /grok 指令的结果将以精美图片卡片形式发送，来源链接单独以文本发送",
+    "default": false
+  },
+  "card_theme": {
+    "type": "string",
+    "description": "卡片主题",
+    "hint": "auto: 根据系统时间自动切换日/夜模式；dark: 深色；light: 浅色",
+    "default": "auto"
+  },
   "max_sources": {
     "type": "int",
     "description": "最大返回来源数量",
@@ -106,23 +124,35 @@
     "editor_language": "markdown",
     "editor_theme": "vs-dark"
   },
+  "enable_fetch": {
+    "type": "bool",
+    "description": "是否启用网页抓取工具",
+    "hint": "启用后 AI 可调用 grok_web_fetch 抓取网页内容",
+    "default": false
+  },
   "enable_skill": {
     "type": "bool",
     "description": "是否安装 Skill 到 skills 目录",
-    "hint": "启用后将安装 Skill 以供 AstrBot 使用",
+    "hint": "启用后将安装 Skill 以供 AstrBot 使用，同时禁用 LLM Tool",
     "default": false
   },
   "extra_body": {
     "type": "text",
     "description": "额外请求体参数（JSON 格式）",
-    "hint": "例如: {\"enable_search\": true}",
-    "default": "{}"
+    "hint": "追加到 API 请求体的 JSON 参数，例如: {\"temperature\": 0.5, \"max_tokens\": 4096}",
+    "default": "",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark"
   },
   "extra_headers": {
     "type": "text",
     "description": "额外请求头（JSON 格式）",
-    "hint": "例如: {\"X-Custom-Header\": \"value\"}",
-    "default": "{}"
+    "hint": "追加到 HTTP 请求头的 JSON 参数，例如: {\"X-Custom-Header\": \"value\"}",
+    "default": "",
+    "editor_mode": true,
+    "editor_language": "json",
+    "editor_theme": "vs-dark"
   },
   "proxy": {
     "type": "string",

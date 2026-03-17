@@ -1,6 +1,6 @@
 # Grok 联网搜索 (astrbot_plugin_grok_web_search)
 
-通过 Grok API 进行实时联网搜索，返回综合答案和来源链接。支持多模态图片搜索。
+通过 Grok API 进行实时联网搜索，返回综合答案和来源链接。支持多模态图片搜索、网页内容抓取。
 
 ## 环境要求
 
@@ -15,8 +15,10 @@
 ## 功能
 
 - `/grok` 指令 - 直接执行搜索，支持附带图片进行多模态搜索
-- LLM Tool (`grok_web_search`) - 供 LLM 自动调用的函数工具，自动提取用户消息中的图片
+- LLM Tool (`grok_web_search`) - 供 LLM 自动调用的实时搜索工具，支持搜索网页和 X (Twitter) 平台
+- LLM Tool (`grok_web_fetch`) - 网页内容抓取工具，将 URL 转为结构化 Markdown，利用 Grok 联网能力实现
 - Skill 脚本 - 可安装到 skills 目录供 LLM 脚本调用，支持 `--image-files` 传入图片
+- 搜索结果图片卡片 - 基于 Pillow 纯本地渲染，面板式布局，支持日/夜自动主题
 
 ## 安装
 
@@ -51,7 +53,7 @@
 | `enable_thinking` | bool | 否 | 是否开启思考模式（默认: true） |
 | `thinking_budget` | int | 否 | 思考 token 预算（默认: 32000） |
 | `max_retries` | int | 否 | 最大重试次数（默认: 3） |
-| `retry_delay` | float | 否 | 重试间隔时间（默认: 1 秒，范围 0.1-5 秒） |
+| `retry_delay` | float | 否 | 重试间隔时间（默认: 1 秒），429 时优先使用 Retry-After 头 |
 | `retryable_status_codes` | list | 否 | 可重试的 HTTP 状态码（默认: [429, 500, 502, 503, 504]） |
 
 ### 输出设置
@@ -59,14 +61,37 @@
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | `show_sources` | bool | 否 | 是否显示来源 URL（默认: false） |
+| `render_as_image` | bool | 否 | 是否将搜索结果渲染为图片卡片（默认: false） |
+| `card_theme` | string | 否 | 卡片主题：auto（按时间自动）/ dark / light（默认: auto） |
 | `max_sources` | int | 否 | 最大返回来源数量，0 表示不限制（默认: 5） |
 | `custom_system_prompt` | text | 否 | 自定义系统提示词（留空使用默认提示词） |
 
-### Skill 设置
+### Skill 与 API 模式
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `enable_skill` | bool | 否 | 是否安装 Skill 到 skills 目录（启用后将禁用 LLM Tool） |
+| `enable_fetch` | bool | 否 | 启用网页抓取工具（默认: false），关闭时工具不会注册 |
+| `enable_skill` | bool | 否 | 安装 Skill 到 skills 目录（启用后所有 LLM Tool 不会注册） |
+| `use_responses_api` | bool | 否 | 使用 xAI Responses API（仅官方 API 支持，非官方端点兼容性不佳） |
+
+> 工具开关在插件初始化时生效，修改配置后插件会自动重载卸载工具。
+
+### 图片卡片渲染
+
+启用 `render_as_image` 后，`/grok` 指令的搜索结果将渲染为精美的图片卡片发送：
+
+- **面板式布局**：每个标题自动分割为独立面板，圆角矩形 + 科技青竖条装饰
+- **日/夜自动主题**：`card_theme` 为 `auto` 时根据系统时间自动切换（7:00-18:00 浅色）
+- **Markdown 支持**：标题、列表、代码块、引用、**粗体**、`行内代码`
+- **来源链接**：以单独文本消息发送（可点击/复制）
+
+#### 效果展示
+
+| 深色主题 | 浅色主题 |
+|:---:|:---:|
+| ![深色主题](image/test_dark.png) | ![浅色主题](image/test_light.png) |
+
+**字体说明**：首次启用时自动从清华镜像下载 Sarasa Term Slab SC 字体。也可在 `data/plugin_data/astrbot_plugin_grok_web_search/font/` 目录放入自定义 `.ttf` 字体文件。
 
 ### HTTP 扩展
 
@@ -95,7 +120,7 @@
 
 ### 重试机制
 
-- `/grok` 指令启用自动重试功能，使用线性退避策略（`retry_delay * 重试次数`）
+- `/grok` 指令启用自动重试，429 时优先使用服务端 `Retry-After` 头指定的等待时间，其他错误使用线性退避
 - LLM Tool 不自动重试，失败立即返回，由 AI 自行决定是否重新调用
 - 重试仅对自定义 HTTP 客户端通过 `retryable_status_codes` 匹配状态码
 - 使用 AstrBot 自带供应商时，采用异常重试机制（不受 `retryable_status_codes` 限制）
@@ -103,6 +128,17 @@
 ### LLM Tool
 
 当 LLM 需要搜索实时信息时，会自动调用 `grok_web_search` 工具。如果用户消息中包含图片，工具会自动提取图片进行多模态搜索。LLM 也可以通过 `image_urls` 参数主动传入图片链接。
+
+每次搜索请求会自动注入当前时间上下文（日期、星期、时区），帮助 Grok 更好地处理时效性查询。
+
+### Web Fetch
+
+`grok_web_fetch` 工具可抓取指定 URL 的网页内容并转为结构化 Markdown。利用 Grok 的联网能力实现。
+
+```
+# LLM 可自动调用，例如用户说：
+"帮我看看 https://example.com 这个页面的内容"
+```
 
 ### Skill
 
@@ -136,7 +172,13 @@ Python 3.12 的主要新特性包括:
 ```
 astrbot_plugin_grok_web_search/
 ├── main.py              # 插件主入口
-├── grok_client.py       # Grok API 异步客户端
+├── api/                 # API 客户端
+│   ├── grok_chat.py     # Chat Completions API 客户端
+│   └── grok_responses.py# Responses API 客户端（xAI 官方）
+├── tool/                # 工具模块
+│   ├── tool.py          # 共享工具（常量、工具函数、重试逻辑）
+│   └── card_render.py   # 搜索结果图片卡片渲染器
+├── image/               # 示例图片
 ├── metadata.yaml        # 插件元数据
 ├── _conf_schema.json    # 配置项 Schema
 ├── README.md
@@ -148,7 +190,9 @@ astrbot_plugin_grok_web_search/
 
 ## 致谢
 
-本插件基于 [grok-skill](https://github.com/Frankieli123/grok-skill) 项目改造，感谢原作者 [@a3180623](https://linux.do/u/a3180623/summary) 的贡献。
+- [grok-skill](https://github.com/Frankieli123/grok-skill) — 原始 Skill 脚本项目，感谢 [@a3180623](https://linux.do/u/a3180623/summary) 的开源贡献。
+- [GrokSearch](https://github.com/GuDaStudio/GrokSearch) — 网页内容抓取功能参考了该项目的实现，感谢 [GuDa Studio](https://github.com/GuDaStudio) 的开源贡献。
+- [@Stonesan233](https://github.com/Stonesan233) — PR #5 贡献了 Responses API 支持、x_search 工具和代理配置。
 
 ## 更新日志
 
@@ -161,7 +205,7 @@ astrbot_plugin_grok_web_search/
 
 ## 🔗 相关链接
 - [AstrBot](https://docs.astrbot.app/)
-- [grok2api](https://github.com/chenyme/grok2api) 
+- [grok2api](https://github.com/chenyme/grok2api)
 
 ## 许可
 

@@ -2,47 +2,53 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [1.2.1] - 2026-03-17
+## [1.3.0] - 2026-03-17
 
 ### Added
-- **x_search 工具**：新增 X/Twitter 平台搜索支持
-  - 同时启用 `web_search` 和 `x_search` 两个工具
-  - 模型会自动判断使用哪个工具（搜索网页内容用 web_search，搜索推特内容用 x_search）
-  - 可以搜索 X 平台的帖子、用户、话题等内容
+- **搜索结果图片卡片渲染**：新增 `card_render.py`，基于 Pillow 纯本地渲染，将搜索结果渲染为面板式深色/浅色卡片图片
+  - 支持 Markdown 子集：标题、列表、代码块、引用、**粗体**、`行内代码`
+  - 每个标题自动分割为独立面板，圆角矩形 + 科技青竖条装饰
+  - 来源链接单独以文本消息发送（可点击/复制）
+- **日/夜自动主题**：`card_theme` 配置项支持 `auto`（7:00-18:00 浅色，其余深色）、`dark`、`light`
+- **字体自动下载**：首次使用时从清华镜像自动下载 Sarasa Term Slab SC 字体（7z），解压后保留所需 ttf
+- **自定义字体**：在字体目录放入自定义 .ttf 文件即可替代默认字体
+- **`render_as_image` 配置项**：图片卡片渲染开关（默认关闭）
+- **`card_theme` 配置项**：卡片主题选择（auto/dark/light）
+- **行内代码渲染**：`` `code` `` 以带背景色的药丸样式渲染
 
-### Fixed
-- 修复图片输入格式：使用 `image/jpeg` MIME 类型替代 `image/*`
-- 添加 `detail: "high"` 参数以获得更好的图片理解效果
+### Changed
+- 项目文件重构：API 客户端移入 `api/` 子目录，工具模块移入 `tool/` 子目录
+- 字体存储路径为 `data/plugin_data/{plugin_name}/font/`，不再随插件源码
 
 ## [1.2.0] - 2026-03-17
 
-### Fixed
-- **重大修复**：使用 xAI Responses API (`/v1/responses`) 替代 Chat Completions API (`/v1/chat/completions`)
-  - 之前的 API 端点不支持真正的联网搜索，导致模型返回幻觉内容
-  - Responses API 是 xAI 官方支持 `web_search` 工具的正确端点
-  - 现在会进行真正的联网搜索，返回准确的实时信息和引用来源
-- 修复 `num_sources_used: 0` 问题，现在可以看到真实的搜索调用 (`web_search_call`)
-
 ### Added
-- 新增 `proxy` 配置项：支持 HTTP 代理配置（如 `http://127.0.0.1:7890`）
-  - 代理同时应用于连通性检查和搜索请求
-- 新增 `citations` 返回字段：包含 API 返回的引用来源列表
+- **Responses API 支持**：新增 `grok_responses.py` 模块，支持 xAI `/v1/responses` 接口（PR #5 by [@Stonesan233](https://github.com/Stonesan233)）
+- **`use_responses_api` 配置项**：切换 Chat Completions / Responses API 模式
+- **x_search 工具**：同时启用 `web_search` 和 `x_search`，支持 X/Twitter 平台搜索
+- **`proxy` 配置项**：支持 HTTP 代理（应用于连通性检查和搜索请求）
+- 官方错误码友好提示（400-429）
+- **`grok_web_fetch` LLM Tool**：网页内容抓取工具，将 URL 转为结构化 Markdown，利用 Grok 联网能力实现
+- **`enable_fetch` 配置项**：网页抓取工具开关（默认关闭），关闭时初始化阶段直接卸载工具
+- **时间注入**：搜索时自动注入当前日期、星期、时间、时区上下文，提升时效性查询准确度
+- **Retry-After 解析**：429 错误时优先使用服务端 `Retry-After` 头指定的等待时间（支持秒数和 HTTP 日期格式）
+- Skill 脚本适配 Responses API，通过读取插件配置 `use_responses_api` 自动切换 API 模式
+- Skill 脚本新增 `--fetch-url` 抓取模式，利用 Grok 联网能力将网页转为结构化 Markdown
 
 ### Changed
-- 移除 `reasoning_effort` 和 `reasoning_budget_tokens` 参数（Grok 4.20+ 不支持）
-- 更新响应解析逻辑以适配 Responses API 的 `output` 数组格式
-- 从 `annotations` 中提取 `url_citation` 作为引用来源
+- **架构重构**：提取共享代码到 `tool.py`（常量、工具函数、重试逻辑、响应解析等），`grok_client.py` 重命名为 `grok_chat.py`
+  - `grok_chat.py`：Chat Completions API（747→287 行）
+  - `grok_responses.py`：Responses API（440→263 行）
+  - `tool.py`：共享工具模块（338 行）
+- LLM Tool 描述优化，明确多模态和 X 平台搜索能力
+- **搜索提示词增强**：广度优先→深度优先搜索策略，优先权威来源，支持中英双语搜索
+- `extra_body` / `extra_headers` 配置改为 JSON 编辑器模式，默认为空
+- `retry_delay` hint 更新以反映 Retry-After 优先策略
+- **工具按需加载**：`enable_skill` / `enable_fetch` 在初始化时直接从全局注册表卸载不需要的 LLM Tool，而非每次请求时移除
 
-### Technical Details
-- Responses API 请求格式：
-  ```json
-  {
-    "model": "grok-4.20-beta-0309-non-reasoning",
-    "input": [...],
-    "tools": [{"type": "web_search"}]
-  }
-  ```
-- 推荐使用 `grok-4.20-beta-0309-non-reasoning` 模型以获得最佳联网搜索效果
+### Fixed
+- 图片格式自动检测与转换：通过 PIL（优先）或魔数字节识别图片格式（JPEG/PNG/GIF/WebP），不支持的格式自动转换为 PNG/JPEG；无法识别时直接报错并给出友好提示
+- 添加 `detail: "high"` 参数以获得更好的图片理解效果
 
 ## [1.1.0] - 2026-03-13
 
@@ -53,7 +59,7 @@
 - `grok_web_search` LLM Tool：新增 `image_urls` 参数，支持传入图片 URL 或 base64 链接
 - `grok_web_search` LLM Tool：自动提取用户消息中的图片和文本上下文
 - Skill 脚本：新增 `--image-files` 参数，支持传入本地图片文件路径
-- `grok_client.py`：`grok_search()` 支持 `images` 参数，构建 OpenAI 接口的`image_url` 消息
+- `grok_chat.py`（原 `grok_client.py`）：`grok_search()` 支持 `images` 参数，构建 OpenAI 接口的`image_url` 消息
 
 ### Changed
 - CI 工作流改为自动修复模式：`ruff format` + `ruff check --fix`，格式变更自动提交

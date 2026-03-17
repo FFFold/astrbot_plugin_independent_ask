@@ -2,16 +2,36 @@ import argparse
 import base64
 import json
 import os
-import re
 import sys
 import time
 import urllib.error
 import urllib.request
 from typing import Any
 
+# ─── 从插件 tool.py 导入共享函数，避免重复维护 ───
+_PLUGIN_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+)
+if _PLUGIN_DIR not in sys.path:
+    sys.path.insert(0, _PLUGIN_DIR)
+
+from tool import (  # noqa: E402
+    FETCH_SYSTEM_PROMPT,
+    coerce_json_object as _coerce_json_object,
+    extract_urls as _extract_urls,
+    get_local_time_info,
+    normalize_api_key as _normalize_api_key,
+    normalize_base_url as _normalize_base_url,
+    normalize_base_url_value as _normalize_base_url_value,
+    normalize_image as _normalize_image,
+)
+
+
+
 
 def _compact_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
+
 
 
 def _default_user_config_path() -> str:
@@ -92,30 +112,7 @@ def _default_skill_config_paths() -> list[str]:
     ]
 
 
-def _normalize_api_key(api_key: str) -> str:
-    api_key = api_key.strip()
-    if not api_key:
-        return ""
-    placeholder = {"YOUR_API_KEY", "API_KEY", "CHANGE_ME", "REPLACE_ME"}
-    if api_key.upper() in placeholder:
-        return ""
-    return api_key
 
-
-def _normalize_base_url_value(base_url: str) -> str:
-    base_url = base_url.strip()
-    if not base_url:
-        return ""
-    placeholder = {
-        "HTTPS://YOUR-GROK-ENDPOINT.EXAMPLE",
-        "YOUR_BASE_URL",
-        "BASE_URL",
-        "CHANGE_ME",
-        "REPLACE_ME",
-    }
-    if base_url.upper() in placeholder:
-        return ""
-    return base_url
 
 
 def _load_json_file(path: str) -> dict[str, Any]:
@@ -129,36 +126,10 @@ def _load_json_file(path: str) -> dict[str, Any]:
     return value
 
 
-def _normalize_base_url(base_url: str) -> str:
-    base_url = base_url.strip().rstrip("/")
-    if base_url.endswith("/v1"):
-        return base_url[: -len("/v1")]
-    return base_url
 
 
-def _coerce_json_object(text: str) -> dict[str, Any] | None:
-    text = text.strip()
-    if not text:
-        return None
-    if text.startswith("{") and text.endswith("}"):
-        try:
-            value = json.loads(text)
-            return value if isinstance(value, dict) else None
-        except json.JSONDecodeError:
-            return None
-    return None
 
 
-def _extract_urls(text: str) -> list[str]:
-    urls = re.findall(r"https?://[^\s)\]}>\"']+", text)
-    seen: set[str] = set()
-    out: list[str] = []
-    for url in urls:
-        url = url.rstrip(".,;:!?'\"")
-        if url and url not in seen:
-            seen.add(url)
-            out.append(url)
-    return out
 
 
 def _load_json_env(var_name: str) -> dict[str, Any]:
@@ -241,10 +212,11 @@ def _request_chat_completions(
     extra_headers: dict[str, Any],
     extra_body: dict[str, Any],
     images: list[str] | None = None,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     url = f"{_normalize_base_url(base_url)}/v1/chat/completions"
 
-    system = (
+    system = system_prompt or (
         "You are a web research assistant. Use live web search/browsing when answering. "
         "Return ONLY a single JSON object with keys: "
         "content (string), sources (array of objects with url/title/snippet when possible). "
@@ -252,19 +224,32 @@ def _request_chat_completions(
         "IMPORTANT: Do NOT use Markdown formatting in the content field - use plain text only."
     )
 
+    # 注入时间上下文
+    time_context = get_local_time_info()
+    enriched_query = f"{time_context}\n{query}"
+
     # Build user message: multimodal format when images are present
     if images:
-        user_content: list[dict[str, Any]] = [{"type": "text", "text": query}]
+        user_content: list[dict[str, Any]] = [{"type": "text", "text": enriched_query}]
         for img_b64 in images:
+            result = _normalize_image(img_b64)
+            if result is None:
+                return {
+                    "error": "❌ 图片格式不支持。Grok 仅支持 JPEG、PNG、GIF、WebP 格式，"
+                    "请转换后再试。",
+                    "error_hint": "用户提供的图片格式无法识别或不受 xAI API 支持，"
+                    "请提示用户转换为 JPEG/PNG/GIF/WebP 格式后重试。",
+                }
+            mime, img_b64 = result
             user_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/*;base64,{img_b64}"},
+                    "image_url": {"url": f"data:{mime};base64,{img_b64}"},
                 }
             )
         user_message: dict[str, Any] = {"role": "user", "content": user_content}
     else:
-        user_message = {"role": "user", "content": query}
+        user_message = {"role": "user", "content": enriched_query}
 
     body: dict[str, Any] = {
         "model": model,
@@ -315,11 +300,138 @@ def _request_chat_completions(
         return json.loads(raw_text)
 
 
+def _request_responses_api(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    query: str,
+    timeout_seconds: float,
+    extra_headers: dict[str, Any],
+    extra_body: dict[str, Any],
+    images: list[str] | None = None,
+) -> dict[str, Any]:
+    """通过 xAI Responses API (/v1/responses) 发起搜索请求"""
+    url = f"{_normalize_base_url(base_url)}/v1/responses"
+
+    system = (
+        "You are a web research assistant. Use live web search/browsing when answering. "
+        "Return ONLY a single JSON object with keys: "
+        "content (string), sources (array of objects with url/title/snippet when possible). "
+        "Keep content concise and evidence-backed. "
+        "IMPORTANT: Do NOT use Markdown formatting in the content field - use plain text only."
+    )
+
+    # 注入时间上下文
+    time_context = get_local_time_info()
+    enriched_query = f"{time_context}\n{query}"
+
+    # Build user input for Responses API
+    if images:
+        user_content: list[dict[str, Any]] = [
+            {"type": "input_text", "text": enriched_query}
+        ]
+        for img_b64 in images:
+            result = _normalize_image(img_b64)
+            if result is None:
+                return {
+                    "error": "❌ 图片格式不支持。Grok 仅支持 JPEG、PNG、GIF、WebP 格式，"
+                    "请转换后再试。",
+                    "error_hint": "用户提供的图片格式无法识别或不受 xAI API 支持，"
+                    "请提示用户转换为 JPEG/PNG/GIF/WebP 格式后重试。",
+                }
+            mime, img_b64 = result
+            user_content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{mime};base64,{img_b64}",
+                    "detail": "high",
+                }
+            )
+        user_input: str | list[dict[str, Any]] = user_content
+    else:
+        user_input = enriched_query
+
+    body: dict[str, Any] = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_input},
+        ],
+        "tools": [
+            {"type": "web_search"},
+            {"type": "x_search"},
+        ],
+    }
+
+    # extra_body 合并（保护核心字段）
+    protected_keys = {"model", "input", "tools", "stream"}
+    for key, value in extra_body.items():
+        if key not in protected_keys:
+            body[key] = value
+
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    for key, value in extra_headers.items():
+        headers[str(key)] = str(value)
+
+    req = urllib.request.Request(
+        url=url,
+        data=_compact_json(body).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+        raw_text = resp.read().decode("utf-8", errors="replace")
+        return json.loads(raw_text)
+
+
+def _parse_responses_api_result(
+    resp: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]]]:
+    """解析 Responses API 响应，提取 message 文本和 citations
+
+    Returns:
+        (message_text, citations_list)
+    """
+    message = ""
+    citations: list[dict[str, Any]] = []
+
+    output = resp.get("output", [])
+    for item in output:
+        if item.get("type") == "message":
+            for content_item in item.get("content", []):
+                if content_item.get("type") == "output_text":
+                    message = content_item.get("text", "")
+                    for ann in content_item.get("annotations", []):
+                        if ann.get("type") == "url_citation":
+                            citations.append(
+                                {
+                                    "url": ann.get("url", ""),
+                                    "title": ann.get("title", ""),
+                                }
+                            )
+                    break
+            break
+
+    # 提取顶层 citations（纯 URL 列表）
+    top_citations = resp.get("citations", [])
+    if isinstance(top_citations, list):
+        for url_str in top_citations:
+            if isinstance(url_str, str) and url_str.startswith("http"):
+                if not any(c.get("url") == url_str for c in citations):
+                    citations.append({"url": url_str, "title": ""})
+
+    return message, citations
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Aggressive web research via OpenAI-compatible Grok endpoint."
     )
-    parser.add_argument("--query", required=True, help="Search query / research task.")
+    parser.add_argument("--query", default="", help="Search query / research task.")
     parser.add_argument("--config", default="", help="Path to config JSON file.")
     parser.add_argument("--base-url", default="", help="Override base URL.")
     parser.add_argument("--api-key", default="", help="Override API key.")
@@ -353,6 +465,11 @@ def main() -> int:
         "--image-files",
         default="",
         help="Comma-separated image file paths for multimodal queries.",
+    )
+    parser.add_argument(
+        "--fetch-url",
+        default="",
+        help="URL to fetch and convert to Markdown (fetch mode, replaces --query).",
     )
     args = parser.parse_args()
 
@@ -468,6 +585,12 @@ def main() -> int:
     if not thinking_budget or thinking_budget <= 0:
         thinking_budget = 32000
 
+    # 解析 Responses API 开关
+    use_responses_api = False
+    cfg_use_responses = config.get("use_responses_api")
+    if isinstance(cfg_use_responses, bool):
+        use_responses_api = cfg_use_responses
+
     if not base_url:
         sys.stderr.write(
             "Missing base URL: set GROK_BASE_URL, write it to config, or pass --base-url\n"
@@ -526,19 +649,51 @@ def main() -> int:
                 sys.stderr.write(f"Failed to read image file {img_path}: {e}\n")
 
     started = time.time()
+
+    # 判断运行模式：fetch 模式 vs search 模式
+    fetch_url = args.fetch_url.strip() if hasattr(args, "fetch_url") else ""
+    is_fetch_mode = bool(fetch_url)
+
+    if is_fetch_mode:
+        # Fetch 模式：抓取网页内容
+        if not fetch_url.startswith("http"):
+            sys.stderr.write("Error: --fetch-url must be a full HTTP/HTTPS URL\n")
+            return 2
+        query = f"{fetch_url}\n获取该网页内容并返回其结构化 Markdown 格式"
+    else:
+        # Search 模式：需要 --query
+        if not args.query:
+            sys.stderr.write("Error: --query is required (or use --fetch-url for fetch mode)\n")
+            return 2
+        query = args.query
+
     try:
-        resp = _request_chat_completions(
-            base_url=base_url,
-            api_key=api_key,
-            model=model,
-            query=args.query,
-            timeout_seconds=timeout_seconds,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
-            extra_headers=extra_headers,
-            extra_body=extra_body,
-            images=images or None,
-        )
+        if use_responses_api and not is_fetch_mode:
+            resp = _request_responses_api(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                query=query,
+                timeout_seconds=timeout_seconds,
+                extra_headers=extra_headers,
+                extra_body=extra_body,
+                images=images or None,
+            )
+        else:
+            # Chat Completions 模式（search 和 fetch 都用这个）
+            resp = _request_chat_completions(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                query=query,
+                timeout_seconds=timeout_seconds,
+                enable_thinking=enable_thinking if not is_fetch_mode else False,
+                thinking_budget=thinking_budget if not is_fetch_mode else 0,
+                extra_headers=extra_headers,
+                extra_body=extra_body,
+                images=images or None,
+                system_prompt=FETCH_SYSTEM_PROMPT if is_fetch_mode else None,
+            )
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
         out = {
@@ -585,13 +740,19 @@ def main() -> int:
         sys.stdout.write(_compact_json(out))
         return 1
 
+    # 根据 API 模式解析响应
     message = ""
-    try:
-        choice0 = (resp.get("choices") or [{}])[0]
-        msg = choice0.get("message") or {}
-        message = msg.get("content") or ""
-    except Exception:
-        message = ""
+    api_citations: list[dict[str, Any]] = []
+
+    if use_responses_api:
+        message, api_citations = _parse_responses_api_result(resp)
+    else:
+        try:
+            choice0 = (resp.get("choices") or [{}])[0]
+            msg = choice0.get("message") or {}
+            message = msg.get("content") or ""
+        except Exception:
+            message = ""
 
     # 空响应检查
     if not message:
@@ -606,6 +767,20 @@ def main() -> int:
         }
         sys.stdout.write(_compact_json(out))
         return 1
+
+    # Fetch 模式：直接返回原始 Markdown 内容，不做 JSON 解析
+    if is_fetch_mode:
+        out = {
+            "ok": True,
+            "fetch_url": fetch_url,
+            "config_path": config_path,
+            "model": resp.get("model") or model,
+            "content": message,
+            "usage": resp.get("usage") or {},
+            "elapsed_ms": int((time.time() - started) * 1000),
+        }
+        sys.stdout.write(_compact_json(out))
+        return 0
 
     parsed = _coerce_json_object(message)
     sources: list[dict[str, Any]] = []
@@ -635,9 +810,20 @@ def main() -> int:
         for url in _extract_urls(message):
             sources.append({"url": url, "title": "", "snippet": ""})
 
+    # 补充 Responses API 的 citations 到 sources
+    if not sources and api_citations:
+        for cit in api_citations:
+            sources.append(
+                {
+                    "url": cit.get("url", ""),
+                    "title": cit.get("title", ""),
+                    "snippet": "",
+                }
+            )
+
     out = {
         "ok": True,
-        "query": args.query,
+        "query": args.query or fetch_url,
         "config_path": config_path,
         "model": resp.get("model") or model,
         "content": content,

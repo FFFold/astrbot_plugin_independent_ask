@@ -1,6 +1,6 @@
 ---
 name: grok-search
-description: Real-time web research/search via Grok API (outputs JSON with content and sources).
+description: Real-time web research/search and URL content fetching via Grok API (outputs JSON with content and sources).
 disable_tools: true
 ---
 
@@ -16,6 +16,8 @@ Use this skill **aggressively** - default to searching before answering anything
 - Documentation lookups
 - Real-time status queries
 - Any information you're not 100% confident about
+
+When you need to read a specific web page's full content, use the **fetch mode** to get structured Markdown.
 
 If you feel even slightly unsure, search first, then answer with evidence.
 
@@ -40,17 +42,28 @@ export GROK_MODEL="grok-4-expert"  # optional
 
 ## Run
 
+### Search mode (default)
+
 ```bash
 python scripts/grok_search.py --query "your search query"
 # With images for multimodal queries:
 python scripts/grok_search.py --query "What is in this image?" --image-files "/path/to/image.jpg"
 ```
 
+### Fetch mode (URL content extraction)
+
+```bash
+python scripts/grok_search.py --fetch-url "https://example.com/article"
+```
+
+Fetch mode uses Grok's web browsing capability to retrieve the URL and convert it to structured Markdown.
+
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `--query` | Search query (required) |
+| `--query` | Search query (required for search mode) |
+| `--fetch-url` | URL to fetch and convert to Markdown (fetch mode) |
 | `--config` | Path to config file |
 | `--base-url` | Override base URL |
 | `--api-key` | Override API key |
@@ -62,7 +75,9 @@ python scripts/grok_search.py --query "What is in this image?" --image-files "/p
 
 ## Output
 
-JSON to stdout (敏感信息如 base_url、api_key 不会输出):
+### Search mode
+
+JSON to stdout (敏感信息如 base_url、api_key 不会输出)：
 
 ```json
 {
@@ -80,7 +95,21 @@ JSON to stdout (敏感信息如 base_url、api_key 不会输出):
 }
 ```
 
-On failure:
+### Fetch mode
+
+```json
+{
+  "ok": true,
+  "fetch_url": "https://example.com/article",
+  "config_path": "[AstrBot Plugin Config]",
+  "model": "grok-4-expert",
+  "content": "# Page Title\n\nFull page content in Markdown...",
+  "usage": {"prompt_tokens": 123, "completion_tokens": 456},
+  "elapsed_ms": 3456
+}
+```
+
+### On failure
 
 ```json
 {
@@ -97,5 +126,6 @@ On failure:
 ## Notes
 
 - Endpoint: `POST {base_url}/v1/chat/completions`
+- Fetch mode uses a specialized system prompt imported from the plugin's `tool.py`
 - If your provider requires custom flags to enable search, pass them via `--extra-body-json`
 - The script uses only Python standard library (no external dependencies)

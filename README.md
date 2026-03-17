@@ -89,7 +89,7 @@
 
 | 深色主题 | 浅色主题 |
 |:---:|:---:|
-| ![深色主题](image/test_dark.png) | ![浅色主题](image/test_light.png) |
+| ![深色主题](image/dark.png) | ![浅色主题](image/light.png) |
 
 **字体说明**：首次启用时自动从清华镜像下载 Sarasa Term Slab SC 字体。也可在 `data/plugin_data/astrbot_plugin_grok_web_search/font/` 目录放入自定义 `.ttf` 字体文件。
 

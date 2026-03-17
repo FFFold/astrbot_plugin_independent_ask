@@ -13,7 +13,7 @@ from typing import Any
 
 import aiohttp
 
-from .tool import (
+from ..tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
     IMAGE_UNSUPPORTED_ERROR,
     build_headers,

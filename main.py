@@ -1015,9 +1015,9 @@ class GrokSearchPlugin(Star):
         if not url or not url.startswith("http"):
             return "错误：请提供完整的 HTTP/HTTPS URL"
 
-        base_url = self.config.get("grok_base_url", "")
-        api_key = self.config.get("grok_api_key", "")
-        model = self.config.get("grok_model", "grok-4-fast")
+        base_url = self.config.get("base_url", "")
+        api_key = self.config.get("api_key", "")
+        model = self.config.get("model", "grok-4-fast")
         timeout = self.config.get("timeout_seconds", 60)
         proxy = self.config.get("proxy", "") or None
 

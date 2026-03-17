@@ -115,8 +115,6 @@ def _find_fonts_in_dir(font_dir: str) -> tuple[str, str] | None:
 
 def _download_fonts(font_dir: str) -> None:
     """从清华镜像下载字体 7z 包并解压"""
-    import subprocess
-    import sys
     import urllib.request
     import tempfile
 
@@ -131,9 +129,9 @@ def _download_fonts(font_dir: str) -> None:
         try:
             import py7zr
         except ImportError:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "py7zr", "-q"]
-            )
+            from pip._internal.cli.main import main as pip_main
+
+            pip_main(["install", "py7zr", "-q"])
             import py7zr
 
         with tempfile.TemporaryDirectory() as tmp_dir:

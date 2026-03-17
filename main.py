@@ -72,22 +72,6 @@ class GrokSearchPlugin(Star):
         self._session: aiohttp.ClientSession | None = None
         self._card_fonts_ready = False
 
-        # 初始化字体
-        try:
-            if get_astrbot_data_path:
-                font_dir = str(
-                    Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME / "font"
-                )
-            else:
-                font_dir = os.path.join(os.path.dirname(__file__), "font")
-            self._card_fonts_ready = init_fonts(font_dir)
-            if self._card_fonts_ready:
-                logger.info(f"[{PLUGIN_NAME}] 卡片渲染字体已就绪: {font_dir}")
-            else:
-                logger.warning(f"[{PLUGIN_NAME}] 卡片渲染字体初始化失败")
-        except Exception as e:
-            logger.warning(f"[{PLUGIN_NAME}] 字体初始化异常: {e}")
-
     async def _extract_content_from_event(
         self, event: AstrMessageEvent
     ) -> tuple[str | None, list[str]]:
@@ -157,8 +141,28 @@ class GrokSearchPlugin(Star):
             _llm_tools_registry.remove_func("grok_web_fetch")
             logger.info(f"[{PLUGIN_NAME}] 网页抓取未启用，已卸载 grok_web_fetch 工具")
 
+    def _init_fonts(self):
+        """Initialize card rendering fonts (runs in background)."""
+        try:
+            if get_astrbot_data_path:
+                font_dir = str(
+                    Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME / "font"
+                )
+            else:
+                font_dir = os.path.join(os.path.dirname(__file__), "font")
+            self._card_fonts_ready = init_fonts(font_dir)
+            if self._card_fonts_ready:
+                logger.info(f"[{PLUGIN_NAME}] 卡片渲染字体已就绪: {font_dir}")
+            else:
+                logger.warning(f"[{PLUGIN_NAME}] 卡片渲染字体初始化失败")
+        except Exception as e:
+            logger.warning(f"[{PLUGIN_NAME}] 字体初始化异常: {e}")
+
     async def initialize(self):
         """插件初始化：验证配置并处理 Skill 安装"""
+        # 在后台初始化字体，避免阻塞启动
+        asyncio.get_event_loop().run_in_executor(None, self._init_fonts)
+
         # 根据配置卸载不需要的 LLM Tool
         self._unregister_disabled_tools()
 

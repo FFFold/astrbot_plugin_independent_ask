@@ -124,87 +124,181 @@ def _find_fonts_in_dir(font_dir: str) -> tuple[str, str] | None:
     return (regular, bold) if regular and bold else None
 
 
+def _extract_7z(archive_path: str, output_dir: str, _log: logging.Logger) -> None:
+    """Extract a 7z archive. Tries system 7z binary first, then py7zr."""
+    import subprocess
+
+    for cmd in ("7z", "7za"):
+        try:
+            result = subprocess.run(
+                [cmd, "x", archive_path, f"-o{output_dir}", "-y"],
+                capture_output=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                _log.info(f"使用 {cmd} 解压成功")
+                return
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+
+    _log.info("系统未安装 7z，尝试使用 py7zr 解压 ...")
+    try:
+        import py7zr
+    except ImportError:
+        from pip._internal.cli.main import main as pip_main
+
+        pip_main(["install", "py7zr", "-q"])
+        import py7zr
+
+    with py7zr.SevenZipFile(archive_path, "r") as z:
+        z.extractall(path=output_dir)
+
+
 def _download_fonts(font_dir: str) -> None:
-    """从清华镜像下载字体 7z 包并解压，支持断点续传"""
+    """从清华镜像下载字体 7z 包并解压"""
     import shutil
     import tempfile
+    import threading
     import urllib.request
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     _log = _module_logger
+    _NUM_THREADS = 4
 
     os.makedirs(font_dir, exist_ok=True)
     archive_path = os.path.join(font_dir, "_font_download.7z")
-    part_path = archive_path + ".part"
 
-    # ── Phase 1: Download (skip if .7z already exists) ──
     if not os.path.exists(archive_path):
-        existing_size = 0
-        if os.path.exists(part_path):
-            existing_size = os.path.getsize(part_path)
-            _log.info(
-                f"检测到未完成的字体下载 ({existing_size / 1024 / 1024:.1f}MB)，继续下载 ..."
-            )
+        _log.info("正在从清华镜像下载字体 ...")
 
-        req = urllib.request.Request(_FONT_DOWNLOAD_URL)
-        if existing_size > 0:
-            req.add_header("Range", f"bytes={existing_size}-")
-
-        if not existing_size:
-            _log.info("正在从清华镜像下载字体 ...")
-
-        resp = urllib.request.urlopen(req, timeout=120)
-        content_range = resp.headers.get("Content-Range", "")
-        total_size = -1
-
-        if content_range and "/" in content_range:
-            total_size = int(content_range.split("/")[-1])
-        elif existing_size == 0:
-            cl = resp.headers.get("Content-Length", "")
-            total_size = int(cl) if cl else -1
-        else:
-            _log.info("服务器不支持断点续传，重新下载 ...")
-            existing_size = 0
-
-        mode = "ab" if existing_size > 0 else "wb"
-        downloaded = existing_size
-        chunk_size = 64 * 1024
-        last_logged_pct = -1
-
-        with open(part_path, mode) as f:
-            while True:
-                chunk = resp.read(chunk_size)
-                if not chunk:
-                    break
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total_size > 0:
-                    pct = int(min(downloaded / total_size, 1.0) * 100)
-                    if pct // 10 > last_logged_pct // 10:
-                        f.flush()
-                        os.fsync(f.fileno())
-                        dl_mb = downloaded / 1024 / 1024
-                        tot_mb = total_size / 1024 / 1024
-                        _log.info(f"字体下载进度: {pct}% ({dl_mb:.1f}/{tot_mb:.1f}MB)")
-                        last_logged_pct = pct
-
-        os.rename(part_path, archive_path)
-        _log.info("字体下载完成，正在解压 ...")
-    else:
-        _log.info("检测到已下载的字体包，直接解压 ...")
-
-    # ── Phase 2: Extract ──
-    try:
+        supports_range = False
+        total_size = 0
         try:
-            import py7zr
-        except ImportError:
-            from pip._internal.cli.main import main as pip_main
+            probe = urllib.request.Request(_FONT_DOWNLOAD_URL)
+            probe.add_header("Range", "bytes=0-0")
+            probe_resp = urllib.request.urlopen(probe, timeout=30)
+            if probe_resp.status == 206:
+                content_range = probe_resp.headers.get("Content-Range", "")
+                if "/" in content_range:
+                    total_size = int(content_range.split("/")[-1])
+                    supports_range = True
+            probe_resp.close()
+        except Exception:
+            pass
 
-            pip_main(["install", "py7zr", "-q"])
-            import py7zr
+        if supports_range and total_size > 1024 * 1024:
+            _log.info(
+                f"文件大小: {total_size / 1024 / 1024:.1f}MB, "
+                f"使用 {_NUM_THREADS} 线程下载"
+            )
+            chunk_ranges = []
+            chunk_sz = total_size // _NUM_THREADS
+            for i in range(_NUM_THREADS):
+                start = i * chunk_sz
+                end = (
+                    (total_size - 1)
+                    if i == _NUM_THREADS - 1
+                    else (start + chunk_sz - 1)
+                )
+                chunk_ranges.append((i, start, end))
 
+            downloaded_lock = threading.Lock()
+            downloaded_bytes = [0]
+            last_logged = [-1]
+
+            def _download_chunk(idx: int, byte_start: int, byte_end: int) -> str:
+                part_file = os.path.join(font_dir, f"_chunk_{idx}.part")
+                r = urllib.request.Request(_FONT_DOWNLOAD_URL)
+                r.add_header("Range", f"bytes={byte_start}-{byte_end}")
+                response = urllib.request.urlopen(r, timeout=180)
+                buf_size = 64 * 1024
+                with open(part_file, "wb") as f:
+                    while True:
+                        buf = response.read(buf_size)
+                        if not buf:
+                            break
+                        f.write(buf)
+                        with downloaded_lock:
+                            downloaded_bytes[0] += len(buf)
+                            pct = int(downloaded_bytes[0] / total_size * 100)
+                            if pct // 10 > last_logged[0] // 10:
+                                dl_mb = downloaded_bytes[0] / 1024 / 1024
+                                tot_mb = total_size / 1024 / 1024
+                                _log.info(
+                                    f"字体下载进度: {pct}% ({dl_mb:.1f}/{tot_mb:.1f}MB)"
+                                )
+                                last_logged[0] = pct
+                return part_file
+
+            part_files = [None] * _NUM_THREADS
+            try:
+                with ThreadPoolExecutor(max_workers=_NUM_THREADS) as pool:
+                    futures = {
+                        pool.submit(_download_chunk, idx, s, e): idx
+                        for idx, s, e in chunk_ranges
+                    }
+                    for future in as_completed(futures):
+                        idx = futures[future]
+                        part_files[idx] = future.result()
+
+                with open(archive_path, "wb") as out:
+                    for pf in part_files:
+                        with open(pf, "rb") as inp:
+                            shutil.copyfileobj(inp, out)
+                _log.info("字体下载完成，正在校验 ...")
+            finally:
+                for pf in part_files:
+                    if pf and os.path.exists(pf):
+                        os.remove(pf)
+        else:
+            if not supports_range:
+                _log.info("服务器不支持分段下载，使用单线程模式")
+            total_mb = total_size / 1024 / 1024 if total_size > 0 else 0
+            if total_mb:
+                _log.info(f"文件大小: {total_mb:.1f}MB")
+
+            resp = urllib.request.urlopen(
+                urllib.request.Request(_FONT_DOWNLOAD_URL), timeout=180
+            )
+            downloaded = 0
+            chunk_size = 64 * 1024
+            last_logged_pct = -1
+            part_path = archive_path + ".part"
+
+            with open(part_path, "wb") as f:
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        pct = int(min(downloaded / total_size, 1.0) * 100)
+                        if pct // 10 > last_logged_pct // 10:
+                            f.flush()
+                            os.fsync(f.fileno())
+                            _log.info(
+                                f"字体下载进度: {pct}% "
+                                f"({downloaded / 1024 / 1024:.1f}/{total_mb:.1f}MB)"
+                            )
+                            last_logged_pct = pct
+
+            os.rename(part_path, archive_path)
+            _log.info("字体下载完成，正在校验 ...")
+    else:
+        _log.info("检测到已下载的字体包，正在校验 ...")
+
+    _SEVEN_Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
+    with open(archive_path, "rb") as f:
+        header = f.read(6)
+    if header != _SEVEN_Z_MAGIC:
+        _log.warning("下载的文件不是有效的 7z 压缩包，已删除，请重试")
+        os.remove(archive_path)
+        raise ValueError("Downloaded file is not a valid 7z archive")
+
+    try:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            with py7zr.SevenZipFile(archive_path, "r") as z:
-                z.extractall(path=tmp_dir)
+            _extract_7z(archive_path, tmp_dir, _log)
 
             kept = 0
             for root, _dirs, files in os.walk(tmp_dir):
@@ -218,7 +312,6 @@ def _download_fonts(font_dir: str) -> None:
 
             _log.info(f"字体安装完成 ({kept} 个文件)")
     finally:
-        # Clean up archive after extraction (success or failure)
         if os.path.exists(archive_path):
             os.remove(archive_path)
 

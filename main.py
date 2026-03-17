@@ -878,9 +878,7 @@ class GrokSearchPlugin(Star):
         event.should_call_llm(True)
 
         # 判断是否以图片卡片形式发送
-        use_image = (
-            self.config.get("render_as_image", False) and self._card_fonts_ready
-        )
+        use_image = self.config.get("render_as_image", False) and self._card_fonts_ready
 
         try:
             if use_image and result.get("ok"):
@@ -894,9 +892,8 @@ class GrokSearchPlugin(Star):
 
                 # 渲染图片
                 import tempfile
-                with tempfile.NamedTemporaryFile(
-                    suffix=".png", delete=False
-                ) as tmp:
+
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                     tmp_path = tmp.name
                 try:
                     render_search_card(
@@ -907,9 +904,7 @@ class GrokSearchPlugin(Star):
                         output_path=tmp_path,
                         theme=theme,
                     )
-                    await event.send(
-                        MessageChain().image(tmp_path)
-                    )
+                    await event.send(MessageChain().image(tmp_path))
                 finally:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
@@ -928,19 +923,13 @@ class GrokSearchPlugin(Star):
                             src_lines.append(f"  {i}. {title}\n     {url}")
                         else:
                             src_lines.append(f"  {i}. {url}")
-                    await event.send(
-                        MessageChain().message("\n".join(src_lines))
-                    )
+                    await event.send(MessageChain().message("\n".join(src_lines)))
             else:
-                await event.send(
-                    MessageChain().message(self._format_result(result))
-                )
+                await event.send(MessageChain().message(self._format_result(result)))
         except Exception as e:
             logger.warning(f"[{PLUGIN_NAME}] 发送搜索结果失败: {e}")
             try:
-                await event.send(
-                    MessageChain().message(self._format_result(result))
-                )
+                await event.send(MessageChain().message(self._format_result(result)))
             except Exception:
                 pass
 

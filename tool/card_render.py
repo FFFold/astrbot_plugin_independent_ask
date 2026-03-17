@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import re
 from io import BytesIO
-from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -64,6 +63,7 @@ def _get_theme(theme: str = "auto") -> dict[str, tuple]:
     if theme == "dark":
         return THEME_DARK
     from datetime import datetime
+
     hour = datetime.now().hour
     return THEME_LIGHT if 7 <= hour < 18 else THEME_DARK
 
@@ -131,7 +131,7 @@ def _download_fonts(font_dir: str) -> None:
         try:
             import py7zr
         except ImportError:
-            subprocess.check_call(  
+            subprocess.check_call(
                 [sys.executable, "-m", "pip", "install", "py7zr", "-q"]
             )
             import py7zr
@@ -141,6 +141,7 @@ def _download_fonts(font_dir: str) -> None:
                 z.extractall(path=tmp_dir)
 
             import shutil
+
             kept = 0
             for root, _dirs, files in os.walk(tmp_dir):
                 for fname in files:
@@ -211,7 +212,7 @@ def _parse_rich(text: str) -> list[_RichSpan]:
     last = 0
     for m in _RE_RICH.finditer(text):
         if m.start() > last:
-            spans.append((text[last:m.start()], "n"))
+            spans.append((text[last : m.start()], "n"))
         matched = m.group(0)
         if matched.startswith("**") and matched.endswith("**"):
             spans.append((matched[2:-2], "b"))
@@ -279,7 +280,11 @@ def _wrap_plain(
             continue
         current = ""
         for ch in paragraph:
-            test_w = draw.textbbox((0, 0), current + ch, font=font)[2] if current else draw.textbbox((0, 0), ch, font=font)[2]
+            test_w = (
+                draw.textbbox((0, 0), current + ch, font=font)[2]
+                if current
+                else draw.textbbox((0, 0), ch, font=font)[2]
+            )
             if test_w <= max_width:
                 current += ch
             else:
@@ -291,7 +296,9 @@ def _wrap_plain(
     return lines
 
 
-def _text_width(text: str, font: ImageFont.FreeTypeFont, draw: ImageDraw.ImageDraw) -> int:
+def _text_width(
+    text: str, font: ImageFont.FreeTypeFont, draw: ImageDraw.ImageDraw
+) -> int:
     bbox = draw.textbbox((0, 0), text, font=font)
     return bbox[2] - bbox[0]
 
@@ -323,7 +330,9 @@ def _draw_rich_spans(
                 radius=4,
                 fill=THEME["inline_code_bg"],
             )
-            draw.text((cx + pad_x, y), text, font=code_font, fill=THEME["inline_code_text"])
+            draw.text(
+                (cx + pad_x, y), text, font=code_font, fill=THEME["inline_code_text"]
+            )
             cx += tw + pad_x * 2 + 3
         else:
             font = font_bold if style == "b" else font_normal
@@ -365,7 +374,16 @@ class _TextElem(_Element):
     def render(self, ctx: "_Ctx", x: int, y: int) -> int:
         lh = _line_height(ctx.f_content)
         for line_spans in self._wrapped(ctx):
-            _draw_rich_spans(line_spans, ctx.draw, x, y, ctx.f_content, ctx.f_bold, THEME["text"], THEME["bold"])
+            _draw_rich_spans(
+                line_spans,
+                ctx.draw,
+                x,
+                y,
+                ctx.f_content,
+                ctx.f_bold,
+                THEME["text"],
+                THEME["bold"],
+            )
             y += lh
         return y + 2
 
@@ -386,7 +404,16 @@ class _BulletElem(_Element):
         lh = _line_height(ctx.f_content)
         ctx.draw.text((x + 2, y), self.marker, font=ctx.f_content, fill=THEME["bullet"])
         for line_spans in self._wrapped(ctx):
-            _draw_rich_spans(line_spans, ctx.draw, x + 22, y, ctx.f_content, ctx.f_bold, THEME["text"], THEME["bold"])
+            _draw_rich_spans(
+                line_spans,
+                ctx.draw,
+                x + 22,
+                y,
+                ctx.f_content,
+                ctx.f_bold,
+                THEME["text"],
+                THEME["bold"],
+            )
             y += lh
         return y + 2
 
@@ -403,10 +430,14 @@ class _QuoteElem(_Element):
         lh = _line_height(ctx.f_content)
         lines = _wrap_plain(self.text, ctx.f_content, ctx.cw - 18, ctx.draw)
         h = len(lines) * lh
-        ctx.draw.line([(x + 4, y + 2), (x + 4, y + h + 6)], fill=THEME["quote_bar"], width=3)
+        ctx.draw.line(
+            [(x + 4, y + 2), (x + 4, y + h + 6)], fill=THEME["quote_bar"], width=3
+        )
         ty = y + 4
         for line in lines:
-            ctx.draw.text((x + 14, ty), line, font=ctx.f_content, fill=THEME["quote_text"])
+            ctx.draw.text(
+                (x + 14, ty), line, font=ctx.f_content, fill=THEME["quote_text"]
+            )
             ty += lh
         return y + h + 12
 
@@ -599,9 +630,7 @@ def _sources_panel_height(sources: list[dict[str, str]], ctx: _Ctx) -> int:
     return h + ctx.panel_pad * 2
 
 
-def _render_sources_panel(
-    sources: list[dict[str, str]], ctx: _Ctx, y: int
-) -> int:
+def _render_sources_panel(sources: list[dict[str, str]], ctx: _Ctx, y: int) -> int:
     if not sources:
         return y
     panel_h = _sources_panel_height(sources, ctx)
@@ -630,7 +659,9 @@ def _render_sources_panel(
             ty += ctx.f_source.size + 5
         if title and url:
             for line in _wrap_plain(url, ctx.f_source, ctx.cw - iw - 8, ctx.draw):
-                ctx.draw.text((tx + iw + 2, ty), line, font=ctx.f_source, fill=THEME["link"])
+                ctx.draw.text(
+                    (tx + iw + 2, ty), line, font=ctx.f_source, fill=THEME["link"]
+                )
                 ty += ctx.f_source.size + 4
         ty += 2
 
@@ -724,9 +755,7 @@ def render_search_card(
 
         if sec.title:
             bar_h = ctx.f_section.size
-            ctx.draw.rectangle(
-                [tx, ty + 3, tx + 4, ty + bar_h], fill=THEME["accent"]
-            )
+            ctx.draw.rectangle([tx, ty + 3, tx + 4, ty + bar_h], fill=THEME["accent"])
             ctx.draw.text(
                 (tx + 12, ty), sec.title, font=ctx.f_section, fill=THEME["text"]
             )

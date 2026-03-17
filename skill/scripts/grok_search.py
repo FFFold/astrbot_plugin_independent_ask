@@ -27,11 +27,8 @@ from tool import (  # noqa: E402
 )
 
 
-
-
 def _compact_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
-
 
 
 def _default_user_config_path() -> str:
@@ -112,9 +109,6 @@ def _default_skill_config_paths() -> list[str]:
     ]
 
 
-
-
-
 def _load_json_file(path: str) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8-sig") as f:
@@ -124,12 +118,6 @@ def _load_json_file(path: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("config must be a JSON object")
     return value
-
-
-
-
-
-
 
 
 def _load_json_env(var_name: str) -> dict[str, Any]:
@@ -663,7 +651,9 @@ def main() -> int:
     else:
         # Search 模式：需要 --query
         if not args.query:
-            sys.stderr.write("Error: --query is required (or use --fetch-url for fetch mode)\n")
+            sys.stderr.write(
+                "Error: --query is required (or use --fetch-url for fetch mode)\n"
+            )
             return 2
         query = args.query
 

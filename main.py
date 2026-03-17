@@ -160,8 +160,9 @@ class GrokSearchPlugin(Star):
 
     async def initialize(self):
         """插件初始化：验证配置并处理 Skill 安装"""
-        # 在后台初始化字体，避免阻塞启动
-        asyncio.get_event_loop().run_in_executor(None, self._init_fonts)
+        # 在后台初始化字体，仅在开启图片渲染模式下
+        if self.config.get("render_as_image", False):
+            asyncio.get_event_loop().run_in_executor(None, self._init_fonts)
 
         # 根据配置卸载不需要的 LLM Tool
         self._unregister_disabled_tools()

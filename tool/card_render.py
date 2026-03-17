@@ -114,17 +114,76 @@ def _find_fonts_in_dir(font_dir: str) -> tuple[str, str] | None:
 
 
 def _download_fonts(font_dir: str) -> None:
-    """从清华镜像下载字体 7z 包并解压"""
-    import urllib.request
+    """从清华镜像下载字体 7z 包并解压，支持断点续传"""
+    import shutil
     import tempfile
+    import urllib.request
 
     os.makedirs(font_dir, exist_ok=True)
     archive_path = os.path.join(font_dir, "_font_download.7z")
+    part_path = archive_path + ".part"
+
+    # Download with resume support
+    existing_size = 0
+    if os.path.exists(part_path):
+        existing_size = os.path.getsize(part_path)
+        print(
+            f"[card_render] 检测到未完成的下载 ({existing_size / 1024 / 1024:.1f}MB)，继续下载 ..."
+        )
+
+    req = urllib.request.Request(_FONT_DOWNLOAD_URL)
+    if existing_size > 0:
+        req.add_header("Range", f"bytes={existing_size}-")
 
     try:
-        print("[card_render] 正在从清华镜像下载字体 ...")
-        urllib.request.urlretrieve(_FONT_DOWNLOAD_URL, archive_path)
-        print("[card_render] 下载完成，正在解压 ...")
+        if not existing_size:
+            print("[card_render] 正在从清华镜像下载字体 ...")
+
+        resp = urllib.request.urlopen(req, timeout=120)
+        content_range = resp.headers.get("Content-Range", "")
+        total_size = -1
+
+        if content_range and "/" in content_range:
+            # Server supports resume: "bytes 12345-99999/100000"
+            total_size = int(content_range.split("/")[-1])
+        elif existing_size == 0:
+            cl = resp.headers.get("Content-Length", "")
+            total_size = int(cl) if cl else -1
+        else:
+            # Server doesn't support Range, restart from scratch
+            print("[card_render] 服务器不支持断点续传，重新下载 ...")
+            existing_size = 0
+
+        mode = "ab" if existing_size > 0 else "wb"
+        downloaded = existing_size
+        chunk_size = 64 * 1024
+        bar_len = 30
+
+        with open(part_path, mode) as f:
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total_size > 0:
+                    pct = min(downloaded / total_size, 1.0)
+                    filled = int(bar_len * pct)
+                    bar = "=" * filled + ">" + " " * (bar_len - filled - 1)
+                    dl_mb = downloaded / 1024 / 1024
+                    tot_mb = total_size / 1024 / 1024
+                    print(
+                        f"\r[card_render] Downloading [{bar}] {pct:.0%} "
+                        f"({dl_mb:.1f}/{tot_mb:.1f}MB)",
+                        end="",
+                        flush=True,
+                    )
+
+        # Download complete, rename .part -> .7z
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
+        os.rename(part_path, archive_path)
+        print("\n[card_render] 下载完成，正在解压 ...")
 
         try:
             import py7zr
@@ -137,8 +196,6 @@ def _download_fonts(font_dir: str) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             with py7zr.SevenZipFile(archive_path, "r") as z:
                 z.extractall(path=tmp_dir)
-
-            import shutil
 
             kept = 0
             for root, _dirs, files in os.walk(tmp_dir):

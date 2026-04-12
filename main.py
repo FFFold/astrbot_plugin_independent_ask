@@ -844,6 +844,15 @@ class GrokSearchPlugin(Star):
                 f"[{PLUGIN_NAME}] /grok command: extracted {len(images)} image(s) from message"
             )
 
+        # 只有消息链中确实包含引用/转发组件时，才使用 extra_text
+        # 避免普通消息的原文（含唤醒词+指令名）被重复拼接
+        has_quoted = any(
+            type(comp).__name__ in ("Reply", "Forward", "Node", "Nodes")
+            for comp in event.get_messages()
+        )
+        if not has_quoted:
+            extra_text = None
+
         # 仅在明确输入 help 时显示帮助
         if query.strip().lower() == "help":
             yield event.plain_result(self._help_text())
@@ -1000,6 +1009,15 @@ class GrokSearchPlugin(Star):
         # 2. 从用户消息事件中自动提取内容
         extra_text, event_images = await self._extract_content_from_event(event)
         images.extend(event_images)
+
+        # 只有消息链中确实包含引用/转发组件时，才使用 extra_text
+        # 避免普通消息的原文（含唤醒词+指令名）被重复拼接
+        has_quoted = any(
+            type(comp).__name__ in ("Reply", "Forward", "Node", "Nodes")
+            for comp in event.get_messages()
+        )
+        if not has_quoted:
+            extra_text = None
 
         # 将引用/转发消息中提取的文本拼接到查询前面作为上下文
         if extra_text:

@@ -2,6 +2,11 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.3.1] - 2026-04-12
+
+### Fix
+-修复了会误把指令单纯消息发给api的问题
+
 ## [1.3.0] - 2026-03-17
 
 ### Added

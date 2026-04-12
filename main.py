@@ -23,7 +23,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.core.star.filter.command import GreedyStr
 from astrbot.api.star import Context, Star
-from astrbot.core.message.components import Image
+from astrbot.core.message.components import Forward, Image, Node, Nodes, Reply
 from astrbot.core.utils.io import download_image_by_url, file_to_base64
 from astrbot.core.utils.quoted_message.chain_parser import (
     _extract_image_refs_from_component_chain,
@@ -831,6 +831,14 @@ class GrokSearchPlugin(Star):
             f"  系统提示词: {prompt_info}"
         )
 
+    @staticmethod
+    def _message_has_quoted(event: AstrMessageEvent) -> bool:
+        """Return True if the message chain contains a quoted/forwarded component."""
+        return any(
+            isinstance(comp, (Reply, Forward, Node, Nodes))
+            for comp in event.get_messages()
+        )
+
     @filter.command("grok")
     async def grok_cmd(self, event: AstrMessageEvent, query: GreedyStr = ""):
         """执行 Grok 搜索
@@ -843,6 +851,11 @@ class GrokSearchPlugin(Star):
             logger.info(
                 f"[{PLUGIN_NAME}] /grok command: extracted {len(images)} image(s) from message"
             )
+
+        # 只有消息链中确实包含引用/转发组件时，才使用 extra_text
+        # 避免普通消息的原文（含唤醒词+指令名）被重复拼接
+        if not self._message_has_quoted(event):
+            extra_text = None
 
         # 仅在明确输入 help 时显示帮助
         if query.strip().lower() == "help":
@@ -1000,6 +1013,11 @@ class GrokSearchPlugin(Star):
         # 2. 从用户消息事件中自动提取内容
         extra_text, event_images = await self._extract_content_from_event(event)
         images.extend(event_images)
+
+        # 只有消息链中确实包含引用/转发组件时，才使用 extra_text
+        # 避免普通消息的原文（含唤醒词+指令名）被重复拼接
+        if not self._message_has_quoted(event):
+            extra_text = None
 
         # 将引用/转发消息中提取的文本拼接到查询前面作为上下文
         if extra_text:

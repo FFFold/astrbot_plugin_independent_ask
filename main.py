@@ -3,17 +3,13 @@ AstrBot 插件：独立 LLM 请求
 
 通过兼容接口发起独立的额外 LLM 请求，支持：
 - /ask 指令
-- Skill 脚本动态安装
 """
 
 import asyncio
 import json
 import os
 import re
-import shutil
-import tempfile
 import time
-import zipfile
 from pathlib import Path
 
 import aiohttp
@@ -138,12 +134,12 @@ class GrokSearchPlugin(Star):
             logger.warning(f"[{PLUGIN_NAME}] 字体初始化异常: {e}")
 
     async def initialize(self):
-        """插件初始化：验证配置并处理 Skill 安装"""
+        """插件初始化：验证配置并准备运行时资源"""
         # 在后台初始化字体，仅在开启图片渲染模式下
         if self.config.get("render_as_image", False):
             asyncio.get_event_loop().run_in_executor(None, self._init_fonts)
 
-        # 如果启用使用 AstrBot 自带供应商，则推迟创建会话和 Skill 安装
+        # 如果启用使用 AstrBot 自带供应商，则推迟完整初始化
         if self.config.get("use_builtin_provider", False):
             logger.info(
                 f"[{PLUGIN_NAME}] use_builtin_provider enabled, delaying full initialization until AstrBot is loaded"
@@ -156,14 +152,6 @@ class GrokSearchPlugin(Star):
         # 根据配置决定是否创建复用的 HTTP 会话
         if self.config.get("reuse_session", False):
             self._session = aiohttp.ClientSession()
-
-        # 首次安装：将插件目录的 skill 移动到持久化目录
-        self._migrate_skill_to_persistent()
-
-        if self.config.get("enable_skill", False):
-            self._install_skill()
-        else:
-            self._uninstall_skill()
 
     async def _validate_config(self):
         """验证必要配置，并通过 v1/models 接口检查连通性"""
@@ -228,18 +216,6 @@ class GrokSearchPlugin(Star):
                 f"[{PLUGIN_NAME}] API 连通性检查超时，请检查 base_url 是否可达"
             )
 
-    def _get_skill_manager(self):
-        """获取 SkillManager 实例（延迟导入）"""
-        if hasattr(self, "_skill_mgr"):
-            return self._skill_mgr
-        try:
-            from astrbot.core.skills import SkillManager
-
-            self._skill_mgr = SkillManager()
-        except ImportError:
-            self._skill_mgr = None
-        return self._skill_mgr
-
     def _get_plugin_data_path(self) -> Path:
         """获取插件持久化数据目录"""
         try:
@@ -254,80 +230,6 @@ class GrokSearchPlugin(Star):
         plugin_data_dir = plugin_data_root / PLUGIN_NAME
         plugin_data_dir.mkdir(parents=True, exist_ok=True)
         return plugin_data_dir
-
-    def _get_skill_persistent_path(self) -> Path:
-        """获取 Skill 持久化存储路径"""
-        return self._get_plugin_data_path() / "skill"
-
-    def _migrate_skill_to_persistent(self):
-        """将插件目录的 skill 同步到持久化目录"""
-        source_dir = Path(__file__).parent / "skill"
-        persistent_dir = self._get_skill_persistent_path()
-
-        if not source_dir.exists():
-            return
-
-        try:
-            shutil.copytree(
-                source_dir,
-                persistent_dir,
-                symlinks=True,
-                dirs_exist_ok=True,
-            )
-            logger.info(f"[{PLUGIN_NAME}] Skill 已同步到持久化目录: {persistent_dir}")
-        except Exception as e:
-            logger.error(f"[{PLUGIN_NAME}] Skill 同步到持久化目录失败: {e}")
-
-    def _install_skill(self):
-        """通过 SkillManager 安装 Skill（打包为 zip 后调用官方接口）"""
-        source_dir = self._get_skill_persistent_path()
-
-        if not source_dir.exists():
-            logger.error(f"[{PLUGIN_NAME}] Skill 持久化目录不存在: {source_dir}")
-            return
-
-        if source_dir.is_symlink():
-            logger.error(
-                f"[{PLUGIN_NAME}] Skill 源目录是 symlink，拒绝安装: {source_dir}"
-            )
-            return
-
-        skill_mgr = self._get_skill_manager()
-        if not skill_mgr:
-            logger.error(f"[{PLUGIN_NAME}] SkillManager 不可用，无法安装 Skill")
-            return
-
-        tmp_zip = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-                tmp_zip = Path(tmp.name)
-
-            with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-                for file in source_dir.rglob("*"):
-                    if file.is_file():
-                        arcname = f"independent-ask/{file.relative_to(source_dir)}"
-                        zf.write(file, arcname)
-
-            skill_mgr.install_skill_from_zip(str(tmp_zip), overwrite=True)
-            logger.info(f"[{PLUGIN_NAME}] Skill 已通过 SkillManager 安装并激活")
-        except Exception as e:
-            logger.error(f"[{PLUGIN_NAME}] Skill 安装失败: {e}")
-        finally:
-            if tmp_zip:
-                tmp_zip.unlink(missing_ok=True)
-
-    def _uninstall_skill(self):
-        """通过 SkillManager 卸载 Skill"""
-        skill_mgr = self._get_skill_manager()
-        if not skill_mgr:
-            logger.error(f"[{PLUGIN_NAME}] SkillManager 不可用，无法卸载 Skill")
-            return
-
-        try:
-            skill_mgr.delete_skill("independent-ask")
-            logger.info(f"[{PLUGIN_NAME}] Skill 已通过 SkillManager 卸载")
-        except Exception as e:
-            logger.error(f"[{PLUGIN_NAME}] Skill 卸载失败: {e}")
 
     def _parse_json_config(self, key: str) -> dict:
         """解析 JSON 格式的配置项"""
@@ -951,13 +853,6 @@ class GrokSearchPlugin(Star):
                 self._session is None or self._session.closed
             ):
                 self._session = aiohttp.ClientSession()
-
-            # 迁移并根据 enable_skill 安装或卸载 Skill
-            self._migrate_skill_to_persistent()
-            if self.config.get("enable_skill", False):
-                self._install_skill()
-            else:
-                self._uninstall_skill()
 
         except Exception as e:
             logger.error(f"[{PLUGIN_NAME}] on_astrbot_loaded 处理失败: {e}")

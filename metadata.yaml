@@ -1,6 +1,6 @@
 name: astrbot_plugin_independent_ask
 display_name: 独立LLM请求
-desc: 用于在当前上下文之外发起一次独立的额外 LLM 请求，支持图片、联网检索和 Skill 调用。
+desc: 用于在当前上下文之外发起一次独立的额外 LLM 请求，支持图片和联网检索。
 version: v1.3.1
 author: piexian
 repo: https://github.com/FFFold/astrbot_plugin_independent_ask

@@ -4,7 +4,7 @@
 
 用于在当前上下文之外发起一次独立的额外 LLM 请求，支持多模态图片输入、联网检索、网页内容抓取。
 
-> 注意：本插件使用新的插件名 `astrbot_plugin_independent_ask`，按新插件安装处理，不提供对原 `astrbot_plugin_grok_web_search` 的配置或 Skill 自动迁移。若你同时安装原插件和本插件，两者会分别维护各自的配置、Skill 和数据目录。
+> 注意：本插件使用新的插件名 `astrbot_plugin_independent_ask`，按新插件安装处理，不提供对原 `astrbot_plugin_grok_web_search` 的配置自动迁移。若你同时安装原插件和本插件，两者会分别维护各自的配置和数据目录。
 
 ## 环境要求
 
@@ -12,14 +12,12 @@
 |------|----------|------|
 | Python | >= 3.10 | |
 | AstrBot | >= v4.9.2 | 基础功能（指令） |
-| AstrBot | >= v4.13.2 | 使用 Skill 功能 |
 
 **平台支持**: 全平台（无限制）
 
 ## 功能
 
 - `/ask` 指令 - 直接发起一次独立请求，支持附带图片进行多模态处理
-- Skill 脚本 - 可安装到 skills 目录供 LLM 脚本调用，支持 `--image-files` 传入图片
 - 搜索结果图片卡片 - 基于 Pillow 纯本地渲染，面板式布局，支持日/夜自动主题
 
 ## 安装
@@ -68,12 +66,11 @@
 | `max_sources` | int | 否 | 最大返回来源数量，0 表示不限制（默认: 5） |
 | `custom_system_prompt` | text | 否 | 自定义系统提示词（留空使用默认提示词） |
 
-### Skill 与 API 模式
+### API 模式
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | `enable_fetch` | bool | 否 | 保留兼容配置项，当前版本不再注册 LLM Tool |
-| `enable_skill` | bool | 否 | 安装 Skill 到 skills 目录 |
 | `use_responses_api` | bool | 否 | 使用 `/v1/responses` 接口，是否可用取决于目标服务端实现 |
 
 > 修改配置后插件会自动重载并应用新设置。
@@ -126,16 +123,6 @@
 - 重试仅对自定义 HTTP 客户端通过 `retryable_status_codes` 匹配状态码
 - 使用 AstrBot 自带供应商时，采用异常重试机制（不受 `retryable_status_codes` 限制）
 
-### Skill
-
-开启 `enable_skill` 后，会安装 Skill 到 `data/skills/independent-ask/`，LLM 可读取 `SKILL.md` 后执行脚本。
-
-Skill 脚本支持通过 `--image-files` 参数传入本地图片进行多模态搜索：
-
-```bash
-python scripts/grok_search.py --query "这张图片是什么？" --image-files "/path/to/image.jpg"
-```
-
 ## 输出示例
 
 ```
@@ -168,15 +155,10 @@ astrbot_plugin_independent_ask/
 ├── metadata.yaml        # 插件元数据
 ├── _conf_schema.json    # 配置项 Schema
 ├── README.md
-└── skill/               # Skill 脚本（首次运行后迁移到 plugin_data）
-    ├── SKILL.md         # Skill 说明文档
-    └── scripts/
-        └── grok_search.py  # 独立请求脚本（仅标准库）
 ```
 
 ## 致谢
 
-- [grok-skill](https://github.com/Frankieli123/grok-skill) — 原始 Skill 脚本项目，感谢 [@a3180623](https://linux.do/u/a3180623/summary) 的开源贡献。
 - [GrokSearch](https://github.com/GuDaStudio/GrokSearch) — 网页内容抓取功能参考了该项目的实现，感谢 [GuDa Studio](https://github.com/GuDaStudio) 的开源贡献。
 - [@Stonesan233](https://github.com/Stonesan233) — PR [#5](https://github.com/FFFold/astrbot_plugin_independent_ask/pull/5) 贡献了 Responses API 支持和代理配置。
 

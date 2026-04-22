@@ -130,12 +130,6 @@
     "hint": "保留兼容配置项，当前版本不再注册 LLM Tool",
     "default": false
   },
-  "enable_skill": {
-    "type": "bool",
-    "description": "是否安装 Skill 到 skills 目录",
-    "hint": "启用后将安装 Skill 以供 AstrBot 使用",
-    "default": false
-  },
   "extra_body": {
     "type": "text",
     "description": "额外请求体参数（JSON 格式）",

@@ -16,7 +16,7 @@ import aiohttp
 
 # ─── 常量 ───────────────────────────────────────────────
 
-# 默认系统提示词（要求返回 JSON 格式，LLM Tool 和 Skill 使用）
+# 默认系统提示词（要求返回 JSON 格式）
 DEFAULT_JSON_SYSTEM_PROMPT = (
     "You are a web research assistant with real-time search capabilities. "
     "Search Strategy: 1) Approach from multiple angles, explore broadly first. "

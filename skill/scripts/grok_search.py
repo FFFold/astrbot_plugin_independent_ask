@@ -15,7 +15,7 @@ _PLUGIN_DIR = os.path.abspath(
 if _PLUGIN_DIR not in sys.path:
     sys.path.insert(0, _PLUGIN_DIR)
 
-from tool import (  # noqa: E402
+from tool import (  # noqa: E402,I001
     FETCH_SYSTEM_PROMPT,
     coerce_json_object as _coerce_json_object,
     extract_urls as _extract_urls,
@@ -33,7 +33,7 @@ def _compact_json(data: Any) -> str:
 
 def _default_user_config_path() -> str:
     home = os.path.expanduser("~")
-    return os.path.join(home, ".codex", "config", "grok-search.json")
+    return os.path.join(home, ".codex", "config", "independent-ask.json")
 
 
 def _skill_root() -> str:
@@ -42,7 +42,7 @@ def _skill_root() -> str:
 
 def _find_astrbot_data_path() -> str:
     """尝试查找 AstrBot data 目录路径"""
-    # 方式1: 从 skill 目录向上查找 (data/skills/grok-search/scripts -> data)
+    # 方式1: 从 skill 目录向上查找 (data/skills/independent-ask/scripts -> data)
     current = os.path.dirname(__file__)
     for _ in range(5):
         parent = os.path.dirname(current)
@@ -77,7 +77,7 @@ def _load_astrbot_plugin_config() -> tuple[dict[str, Any], str]:
         return {}, "AstrBot data 目录未找到"
 
     config_path = os.path.join(
-        data_path, "config", "astrbot_plugin_grok_web_search.json"
+        data_path, "config", "astrbot_plugin_independent_ask.json"
     )
     if not os.path.exists(config_path):
         return {}, f"AstrBot 插件配置文件不存在: {config_path}"
@@ -223,9 +223,9 @@ def _request_chat_completions(
             result = _normalize_image(img_b64)
             if result is None:
                 return {
-                    "error": "❌ 图片格式不支持。Grok 仅支持 JPEG、PNG、GIF、WebP 格式，"
+                    "error": "❌ 图片格式不支持。当前接口仅支持 JPEG、PNG、GIF、WebP 格式，"
                     "请转换后再试。",
-                    "error_hint": "用户提供的图片格式无法识别或不受 xAI API 支持，"
+                    "error_hint": "用户提供的图片格式无法识别或不受目标接口支持，"
                     "请提示用户转换为 JPEG/PNG/GIF/WebP 格式后重试。",
                 }
             mime, img_b64 = result
@@ -240,7 +240,6 @@ def _request_chat_completions(
         user_message = {"role": "user", "content": enriched_query}
 
     body: dict[str, Any] = {
-        "model": model,
         "messages": [
             {"role": "system", "content": system},
             user_message,
@@ -248,6 +247,8 @@ def _request_chat_completions(
         "temperature": 0.2,
         "stream": False,
     }
+    if model:
+        body["model"] = model
 
     # 添加思考模式参数
     if enable_thinking:
@@ -299,7 +300,7 @@ def _request_responses_api(
     extra_body: dict[str, Any],
     images: list[str] | None = None,
 ) -> dict[str, Any]:
-    """通过 xAI Responses API (/v1/responses) 发起搜索请求"""
+    """通过 /v1/responses 发起搜索请求"""
     url = f"{_normalize_base_url(base_url)}/v1/responses"
 
     system = (
@@ -323,9 +324,9 @@ def _request_responses_api(
             result = _normalize_image(img_b64)
             if result is None:
                 return {
-                    "error": "❌ 图片格式不支持。Grok 仅支持 JPEG、PNG、GIF、WebP 格式，"
+                    "error": "❌ 图片格式不支持。当前接口仅支持 JPEG、PNG、GIF、WebP 格式，"
                     "请转换后再试。",
-                    "error_hint": "用户提供的图片格式无法识别或不受 xAI API 支持，"
+                    "error_hint": "用户提供的图片格式无法识别或不受目标接口支持，"
                     "请提示用户转换为 JPEG/PNG/GIF/WebP 格式后重试。",
                 }
             mime, img_b64 = result
@@ -341,7 +342,6 @@ def _request_responses_api(
         user_input = enriched_query
 
     body: dict[str, Any] = {
-        "model": model,
         "input": [
             {"role": "system", "content": system},
             {"role": "user", "content": user_input},
@@ -351,6 +351,8 @@ def _request_responses_api(
             {"type": "x_search"},
         ],
     }
+    if model:
+        body["model"] = model
 
     # extra_body 合并（保护核心字段）
     protected_keys = {"model", "input", "tools", "stream"}
@@ -417,7 +419,7 @@ def _parse_responses_api_result(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Aggressive web research via OpenAI-compatible Grok endpoint."
+        description="Independent web research via an OpenAI-compatible endpoint."
     )
     parser.add_argument("--query", default="", help="Search query / research task.")
     parser.add_argument("--config", default="", help="Path to config JSON file.")
@@ -526,7 +528,7 @@ def main() -> int:
         args.model.strip()
         or os.environ.get("GROK_MODEL", "").strip()
         or str(config.get("model") or "").strip()
-        or "grok-4-fast"
+        or ""
     )
 
     timeout_seconds = args.timeout_seconds

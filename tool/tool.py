@@ -1,5 +1,5 @@
 """
-Grok 插件共享工具模块
+独立请求插件共享工具模块
 
 提供共用的参数、工具函数和共享逻辑。
 """
@@ -45,8 +45,8 @@ FETCH_SYSTEM_PROMPT = (
 
 # 图片格式不支持时的标准错误返回
 IMAGE_UNSUPPORTED_ERROR: dict[str, str] = {
-    "error": "❌ 图片格式不支持。Grok 仅支持 JPEG、PNG、GIF、WebP 格式，请转换后再试。",
-    "error_hint": "用户提供的图片格式无法识别或不受 xAI API 支持，"
+    "error": "❌ 图片格式不支持。当前接口仅支持 JPEG、PNG、GIF、WebP 格式，请转换后再试。",
+    "error_hint": "用户提供的图片格式无法识别或不受目标接口支持，"
     "请提示用户转换为 JPEG/PNG/GIF/WebP 格式后重试。",
 }
 
@@ -118,7 +118,7 @@ def parse_retry_after(headers: Any) -> float | None:
 def normalize_image(b64_data: str) -> tuple[str, str] | None:
     """检测图片格式，必要时转换为 API 支持的格式。
 
-    xAI 支持: JPEG, PNG, GIF, WebP
+    当前接口支持: JPEG, PNG, GIF, WebP
     不支持的格式（BMP, TIFF 等）会尝试用 PIL 转为 PNG。
     无法识别的格式返回 None（调用方应报错拒绝）。
 

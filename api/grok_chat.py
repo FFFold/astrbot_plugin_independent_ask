@@ -1,7 +1,7 @@
 """
-Grok Chat Completions API 异步客户端
+Chat Completions API 异步客户端
 
-通过 OpenAI 兼容接口 (/v1/chat/completions) 调用 Grok 进行联网搜索。
+通过 OpenAI 兼容接口 (/v1/chat/completions) 发起联网请求。
 """
 
 import json
@@ -46,11 +46,11 @@ async def grok_search(
     proxy: str | None = None,
 ) -> dict[str, Any]:
     """
-    调用 Grok API 进行联网搜索（异步）
+    调用兼容 API 进行联网搜索（异步）
 
     Args:
         query: 搜索查询内容
-        base_url: Grok API 端点
+        base_url: API 端点
         api_key: API 密钥
         model: 模型名称
         timeout: 超时时间（秒）
@@ -80,7 +80,7 @@ async def grok_search(
     started = time.time()
 
     # 验证必要参数
-    config = validate_config(base_url, api_key, started, base_url_label="Grok API 端点")
+    config = validate_config(base_url, api_key, started, base_url_label="API 端点")
     if isinstance(config, dict):
         return config
     base_url, api_key = config
@@ -304,11 +304,11 @@ async def grok_fetch(
     session: aiohttp.ClientSession | None = None,
     proxy: str | None = None,
 ) -> dict[str, Any]:
-    """利用 Grok 联网能力抓取指定 URL 的网页内容并转为 Markdown
+    """利用联网能力抓取指定 URL 的网页内容并转为 Markdown
 
     Args:
         url: 要抓取的网页 URL
-        base_url: Grok API 端点
+        base_url: API 端点
         api_key: API 密钥
         model: 模型名称
         timeout: 超时时间（秒）

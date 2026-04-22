@@ -1,12 +1,12 @@
 ---
-name: grok-search
-description: Real-time web research/search and URL content fetching via Grok API (outputs JSON with content and sources).
+name: independent-ask
+description: Independent web research/search and URL content fetching via a compatible LLM API (outputs JSON with content and sources).
 disable_tools: true
 ---
 
 ## Important
 
-**使用此 Skill 时必须禁用工具调用**，否则 AI 会直接调用 `grok_web_search` 工具而非执行脚本。
+**使用此 Skill 时应禁用工具调用**，避免 AI 偏离为其他工具路径而非执行脚本。
 
 ## When to use
 
@@ -31,14 +31,14 @@ If you feel even slightly unsure, search first, then answer with evidence.
 ```bash
 export GROK_BASE_URL="https://your-grok-endpoint.example"
 export GROK_API_KEY="your-api-key"
-export GROK_MODEL="grok-4-expert"  # optional
+export GROK_MODEL="your-model-name"  # optional
 ```
 
 或使用配置文件：
 - AstrBot 插件配置（自动读取，优先级最高）
 - `./config.json` (skill directory)
 - `./config.local.json` (skill directory, gitignored)
-- `~/.codex/config/grok-search.json` (user global)
+- `~/.codex/config/independent-ask.json` (user global)
 
 ## Run
 
@@ -56,7 +56,7 @@ python scripts/grok_search.py --query "What is in this image?" --image-files "/p
 python scripts/grok_search.py --fetch-url "https://example.com/article"
 ```
 
-Fetch mode uses Grok's web browsing capability to retrieve the URL and convert it to structured Markdown.
+Fetch mode uses the target model's browsing capability to retrieve the URL and convert it to structured Markdown.
 
 ### Options
 
@@ -84,7 +84,7 @@ JSON to stdout (敏感信息如 base_url、api_key 不会输出)：
   "ok": true,
   "query": "your query",
   "config_path": "[AstrBot Plugin Config]",
-  "model": "grok-4-expert",
+  "model": "your-model-name",
   "content": "synthesized answer...",
   "sources": [
     {"url": "https://...", "title": "...", "snippet": "..."}
@@ -102,7 +102,7 @@ JSON to stdout (敏感信息如 base_url、api_key 不会输出)：
   "ok": true,
   "fetch_url": "https://example.com/article",
   "config_path": "[AstrBot Plugin Config]",
-  "model": "grok-4-expert",
+  "model": "your-model-name",
   "content": "# Page Title\n\nFull page content in Markdown...",
   "usage": {"prompt_tokens": 123, "completion_tokens": 456},
   "elapsed_ms": 3456
@@ -118,7 +118,7 @@ JSON to stdout (敏感信息如 base_url、api_key 不会输出)：
   "detail": "Unauthorized",
   "config_path": "[AstrBot Plugin Config]",
   "config_status": "OK",
-  "model": "grok-4-expert",
+  "model": "your-model-name",
   "elapsed_ms": 234
 }
 ```

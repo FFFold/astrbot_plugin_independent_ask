@@ -14,23 +14,23 @@
   "model": {
     "type": "string",
     "description": "模型名称",
-    "hint": "选择要使用的 Grok 模型",
-    "default": "grok-4.1-fast"
+    "hint": "留空时由目标服务端或供应商决定",
+    "default": ""
   },
   "use_responses_api": {
     "type": "bool",
     "description": "使用 /v1/responses 接口",
-    "hint": "⚠️ 仅适用于 xAI 官方 API，非官方/第三方服务对此接口支持不完善，可能导致请求失败",
+    "hint": "是否可用取决于目标服务端实现，部分兼容端点可能不支持或支持不完整",
     "default": false
   },
   "base_url": {
     "type": "string",
-    "description": "Grok API 端点 URL",
+    "description": "API 端点 URL",
     "hint": "使用自定义供应商时必填,例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
   },
   "api_key": {
     "type": "string",
-    "description": "Grok API 密钥",
+    "description": "API 密钥",
     "hint": "使用自定义供应商时必填,你的 API Key"
   },
   "timeout_seconds": {
@@ -100,7 +100,7 @@
   "render_as_image": {
     "type": "bool",
     "description": "是否将搜索结果渲染为图片卡片",
-    "hint": "启用后 /grok 指令的结果将以精美图片卡片形式发送，来源链接单独以文本发送",
+    "hint": "启用后 /ask 指令的结果将以精美图片卡片形式发送，来源链接单独以文本发送",
     "default": false
   },
   "card_theme": {
@@ -127,13 +127,13 @@
   "enable_fetch": {
     "type": "bool",
     "description": "是否启用网页抓取工具",
-    "hint": "启用后 AI 可调用 grok_web_fetch 抓取网页内容",
+    "hint": "保留兼容配置项，当前版本不再注册 LLM Tool",
     "default": false
   },
   "enable_skill": {
     "type": "bool",
     "description": "是否安装 Skill 到 skills 目录",
-    "hint": "启用后将安装 Skill 以供 AstrBot 使用，同时禁用 LLM Tool",
+    "hint": "启用后将安装 Skill 以供 AstrBot 使用",
     "default": false
   },
   "extra_body": {

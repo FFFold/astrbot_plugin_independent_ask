@@ -1,42 +1,38 @@
 """
-AstrBot 插件：Grok 联网搜索
+AstrBot 插件：独立 LLM 请求
 
-通过 Grok API 进行实时联网搜索，支持：
-- /grok 指令
-- LLM Tool (grok_web_search)
+通过兼容接口发起独立的额外 LLM 请求，支持：
+- /ask 指令
 - Skill 脚本动态安装
 """
 
-import shutil
-import tempfile
-import zipfile
-from pathlib import Path
-import re
-
-import aiohttp
 import asyncio
 import json
 import os
+import re
+import shutil
+import tempfile
 import time
+import zipfile
+from pathlib import Path
+
+import aiohttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.core.star.filter.command import GreedyStr
 from astrbot.api.star import Context, Star
 from astrbot.core.message.components import Forward, Image, Node, Nodes, Reply
-from astrbot.core.utils.io import download_image_by_url, file_to_base64
+from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.utils.quoted_message.chain_parser import (
     _extract_image_refs_from_component_chain,
     _extract_text_from_component_chain,
 )
 
-from .api.grok_chat import grok_fetch, grok_search
+from .api.grok_chat import grok_search
 from .api.grok_responses import grok_responses_search
+from .tool.card_render import init_fonts, render_search_card
+from .tool.card_render import set_logger as set_card_logger
 
-try:
-    from astrbot.core.provider.register import llm_tools as _llm_tools_registry
-except ImportError:
-    _llm_tools_registry = None
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except ImportError:
@@ -47,13 +43,8 @@ from .tool.tool import (
     normalize_base_url,
     parse_json_config,
 )
-from .tool.card_render import (
-    render_search_card,
-    init_fonts,
-    set_logger as set_card_logger,
-)
 
-PLUGIN_NAME = "astrbot_plugin_grok_web_search"
+PLUGIN_NAME = "astrbot_plugin_independent_ask"
 
 
 def _fmt_tokens(n: int) -> str:
@@ -127,24 +118,6 @@ class GrokSearchPlugin(Star):
 
         return text, images
 
-    def _unregister_disabled_tools(self):
-        """根据配置在初始化时直接卸载不需要的 LLM Tool，避免 AI 看到无用工具"""
-        if _llm_tools_registry is None:
-            return
-
-        if self.config.get("enable_skill", False):
-            # Skill 接管，移除所有 LLM Tool
-            _llm_tools_registry.remove_func("grok_web_search")
-            _llm_tools_registry.remove_func("grok_web_fetch")
-            logger.info(
-                f"[{PLUGIN_NAME}] Skill 已启用，已卸载 grok_web_search 和 grok_web_fetch 工具"
-            )
-            return
-
-        if not self.config.get("enable_fetch", False):
-            _llm_tools_registry.remove_func("grok_web_fetch")
-            logger.info(f"[{PLUGIN_NAME}] 网页抓取未启用，已卸载 grok_web_fetch 工具")
-
     def _init_fonts(self):
         """Initialize card rendering fonts (runs in background)."""
         logger.info(f"[{PLUGIN_NAME}] 正在后台初始化卡片渲染字体 ...")
@@ -169,9 +142,6 @@ class GrokSearchPlugin(Star):
         # 在后台初始化字体，仅在开启图片渲染模式下
         if self.config.get("render_as_image", False):
             asyncio.get_event_loop().run_in_executor(None, self._init_fonts)
-
-        # 根据配置卸载不需要的 LLM Tool
-        self._unregister_disabled_tools()
 
         # 如果启用使用 AstrBot 自带供应商，则推迟创建会话和 Skill 安装
         if self.config.get("use_builtin_provider", False):
@@ -201,7 +171,7 @@ class GrokSearchPlugin(Star):
         api_key = normalize_api_key(self.config.get("api_key", ""))
         if not base_url:
             logger.warning(
-                f"[{PLUGIN_NAME}] 缺少 base_url 配置，请在插件设置中填写 Grok API 端点"
+                f"[{PLUGIN_NAME}] 缺少 base_url 配置，请在插件设置中填写 API 端点"
             )
             return
         if not api_key:
@@ -290,18 +260,23 @@ class GrokSearchPlugin(Star):
         return self._get_plugin_data_path() / "skill"
 
     def _migrate_skill_to_persistent(self):
-        """首次安装：将插件目录的 skill 复制到持久化目录"""
+        """将插件目录的 skill 同步到持久化目录"""
         source_dir = Path(__file__).parent / "skill"
         persistent_dir = self._get_skill_persistent_path()
 
-        if source_dir.exists() and not persistent_dir.exists():
-            try:
-                shutil.copytree(source_dir, persistent_dir, symlinks=True)
-                logger.info(
-                    f"[{PLUGIN_NAME}] Skill 已复制到持久化目录: {persistent_dir}"
-                )
-            except Exception as e:
-                logger.error(f"[{PLUGIN_NAME}] Skill 复制到持久化目录失败: {e}")
+        if not source_dir.exists():
+            return
+
+        try:
+            shutil.copytree(
+                source_dir,
+                persistent_dir,
+                symlinks=True,
+                dirs_exist_ok=True,
+            )
+            logger.info(f"[{PLUGIN_NAME}] Skill 已同步到持久化目录: {persistent_dir}")
+        except Exception as e:
+            logger.error(f"[{PLUGIN_NAME}] Skill 同步到持久化目录失败: {e}")
 
     def _install_skill(self):
         """通过 SkillManager 安装 Skill（打包为 zip 后调用官方接口）"""
@@ -330,7 +305,7 @@ class GrokSearchPlugin(Star):
             with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
                 for file in source_dir.rglob("*"):
                     if file.is_file():
-                        arcname = f"grok-search/{file.relative_to(source_dir)}"
+                        arcname = f"independent-ask/{file.relative_to(source_dir)}"
                         zf.write(file, arcname)
 
             skill_mgr.install_skill_from_zip(str(tmp_zip), overwrite=True)
@@ -349,7 +324,7 @@ class GrokSearchPlugin(Star):
             return
 
         try:
-            skill_mgr.delete_skill("grok-search")
+            skill_mgr.delete_skill("independent-ask")
             logger.info(f"[{PLUGIN_NAME}] Skill 已通过 SkillManager 卸载")
         except Exception as e:
             logger.error(f"[{PLUGIN_NAME}] Skill 卸载失败: {e}")
@@ -546,12 +521,12 @@ class GrokSearchPlugin(Star):
 
             # 根据配置选择 API 模式
             if self.config.get("use_responses_api", False):
-                # 使用 xAI Responses API（/v1/responses）
+                # 使用 Responses API（/v1/responses）
                 result = await grok_responses_search(
                     query=query,
                     base_url=self.config.get("base_url", ""),
                     api_key=self.config.get("api_key", ""),
-                    model=self.config.get("model", "grok-4-fast"),
+                    model=self.config.get("model", ""),
                     timeout=timeout,
                     extra_body=self._parse_json_config("extra_body"),
                     extra_headers=self._parse_json_config("extra_headers"),
@@ -569,7 +544,7 @@ class GrokSearchPlugin(Star):
                     query=query,
                     base_url=self.config.get("base_url", ""),
                     api_key=self.config.get("api_key", ""),
-                    model=self.config.get("model", "grok-4-fast"),
+                    model=self.config.get("model", ""),
                     timeout=timeout,
                     enable_thinking=self.config.get("enable_thinking", True),
                     thinking_budget=thinking_budget,
@@ -798,7 +773,7 @@ class GrokSearchPlugin(Star):
         model = (
             "由供应商决定"
             if use_builtin
-            else (self.config.get("model", "grok-4-fast") or "默认")
+            else (self.config.get("model", "") or "由服务端决定")
         )
         has_custom_prompt = bool(
             (self.config.get("custom_system_prompt", "") or "").strip()
@@ -806,23 +781,22 @@ class GrokSearchPlugin(Star):
         if has_custom_prompt:
             prompt_info = "自定义"
         else:
-            prompt_info = "内置中文（/grok 指令）/ 内置英文 JSON（LLM Tool）"
+            prompt_info = "内置中文（/ask 指令）"
 
         return (
-            "Grok 联网搜索\n"
+            "独立 LLM 请求\n"
             "\n"
             "用法:\n"
-            "  /grok help           显示此帮助\n"
-            "  /grok <搜索内容>     执行联网搜索\n"
+            "  /ask help            显示此帮助\n"
+            "  /ask <请求内容>      发起独立请求\n"
             "\n"
             "示例:\n"
-            "  /grok Python 3.12 有什么新特性\n"
-            "  /grok 最新的 AI 新闻\n"
-            "  /grok React 19 发布了吗\n"
+            "  /ask Python 3.12 有什么新特性\n"
+            "  /ask 帮我总结今天的 AI 新闻\n"
+            "  /ask 翻译这张图片里的文字\n"
             "\n"
             "调用方式:\n"
-            "  - /grok 指令：直接搜索并返回结果\n"
-            "  - LLM Tool：模型自动调用 grok_web_search\n"
+            "  - /ask 指令：直接发起一次独立请求并返回结果\n"
             "\n"
             f"当前配置:\n"
             f"  供应商来源: {mode}\n"
@@ -839,17 +813,17 @@ class GrokSearchPlugin(Star):
             for comp in event.get_messages()
         )
 
-    @filter.command("grok")
-    async def grok_cmd(self, event: AstrMessageEvent, query: GreedyStr = ""):
-        """执行 Grok 搜索
+    @filter.command("ask")
+    async def ask_cmd(self, event: AstrMessageEvent, query: GreedyStr = ""):
+        """执行独立 LLM 请求
 
-        用法: /grok <搜索内容>
+        用法: /ask <请求内容>
         """
         # 提取消息中的文本和图片（包括引用消息/转发消息）
         extra_text, images = await self._extract_content_from_event(event)
         if images:
             logger.info(
-                f"[{PLUGIN_NAME}] /grok command: extracted {len(images)} image(s) from message"
+                f"[{PLUGIN_NAME}] /ask command: extracted {len(images)} image(s) from message"
             )
 
         # 只有消息链中确实包含引用/转发组件时，才使用 extra_text
@@ -962,125 +936,6 @@ class GrokSearchPlugin(Star):
                 await event.send(MessageChain().message(self._format_result(result)))
             except Exception as e:
                 logger.warning(f"[{PLUGIN_NAME}] 发送搜索结果失败: {e}")
-
-    @filter.llm_tool(name="grok_web_search")
-    async def grok_tool(
-        self,
-        event: AstrMessageEvent,
-        query: str,
-        image_urls: str = "",
-    ) -> str:
-        """实时联网搜索工具。搜索互联网和 X（Twitter）平台获取最新、准确的信息并返回搜索结果和来源链接。
-
-        何时使用：
-        - 用户询问实时信息、最新动态、新闻事件、天气、股价等时效性内容
-        - 需要验证事实准确性或你对某个信息不确定时
-        - 用户明确要求搜索或查询
-        - 问题涉及你训练数据截止日期之后的内容
-        - 需要获取特定网址、产品、人物的最新状态
-        - 需要查找 X（Twitter）上的讨论、帖子、用户动态或社交媒体舆论
-
-        返回内容：搜索结果的文本摘要，可能附带参考来源链接。如果搜索失败会返回错误信息。
-
-        Args:
-            query(string): 搜索查询内容，应是清晰、具体、自包含的自然语言问题或关键词
-            image_urls(string): 可选，逗号分隔的图片URL，用于基于图片内容的搜索
-        """
-        # 收集图片：从 LLM 传入的 image_urls 参数 + 用户消息中提取
-        images: list[str] = []
-
-        # 1. 解析 LLM 传入的 image_urls
-        if image_urls and isinstance(image_urls, str):
-            for url in image_urls.split(","):
-                url = url.strip()
-                if not url:
-                    continue
-                if url.startswith("base64://"):
-                    images.append(url.removeprefix("base64://"))
-                elif url.startswith("http"):
-                    # 下载并转为 base64
-                    try:
-                        file_path = await download_image_by_url(url)
-                        b64 = file_to_base64(file_path)
-                        b64 = b64.removeprefix("base64://")
-                        if b64:
-                            images.append(b64)
-                    except Exception as e:
-                        logger.warning(
-                            f"[{PLUGIN_NAME}] Failed to download image from URL {url}: {e}"
-                        )
-
-        # 2. 从用户消息事件中自动提取内容
-        extra_text, event_images = await self._extract_content_from_event(event)
-        images.extend(event_images)
-
-        # 只有消息链中确实包含引用/转发组件时，才使用 extra_text
-        # 避免普通消息的原文（含唤醒词+指令名）被重复拼接
-        if not self._message_has_quoted(event):
-            extra_text = None
-
-        # 将引用/转发消息中提取的文本拼接到查询前面作为上下文
-        if extra_text:
-            query = (
-                f"[Referenced message content]\n{extra_text}\n\n[User query]\n{query}"
-            )
-
-        if images:
-            logger.info(
-                f"[{PLUGIN_NAME}] grok_web_search tool: processing with {len(images)} image(s)"
-            )
-
-        result = await self._do_search(query, use_retry=False, images=images or None)
-        return self._format_result_for_llm(result)
-
-    @filter.llm_tool(name="grok_web_fetch")
-    async def grok_fetch_tool(self, event: AstrMessageEvent, url: str):
-        """网页内容抓取工具。利用 Grok 联网能力获取指定 URL 的完整网页内容，转换为结构化 Markdown 格式返回。
-
-        使用场景：
-        - 需要读取某个网页的完整内容（文章、文档、帖子等）
-        - 需要提取网页中的具体数据（表格、代码示例、列表等）
-        - 用户提供了一个 URL 并要求查看或总结其内容
-
-        注意：不需要额外配置外部 API，直接通过 Grok 的联网能力实现。
-
-        Args:
-            url(string): 要抓取的网页 URL，必须是完整的 HTTP/HTTPS 地址
-        """
-        if not url or not url.startswith("http"):
-            return "错误：请提供完整的 HTTP/HTTPS URL"
-
-        base_url = self.config.get("base_url", "")
-        api_key = self.config.get("api_key", "")
-        model = self.config.get("model", "grok-4-fast")
-        timeout = self.config.get("timeout_seconds", 60)
-        proxy = self.config.get("proxy", "") or None
-
-        extra_body_str = self.config.get("extra_body", "")
-        extra_headers_str = self.config.get("extra_headers", "")
-        extra_body, _ = parse_json_config(extra_body_str)
-        extra_headers, _ = parse_json_config(extra_headers_str)
-
-        result = await grok_fetch(
-            url=url,
-            base_url=base_url,
-            api_key=api_key,
-            model=model,
-            timeout=float(timeout) if timeout else 60.0,
-            extra_body=extra_body or None,
-            extra_headers=extra_headers or None,
-            proxy=proxy,
-        )
-
-        if result.get("ok"):
-            content = result.get("content", "")
-            elapsed = result.get("elapsed_ms", 0)
-            if content:
-                return f"{content}\n\n---\n耗时: {elapsed}ms"
-            return "抓取成功但页面内容为空"
-        else:
-            error = result.get("error", "未知错误")
-            return f"网页抓取失败: {error}"
 
     @filter.on_astrbot_loaded()
     async def on_astrbot_loaded(self):

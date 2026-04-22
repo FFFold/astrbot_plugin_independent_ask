@@ -1,10 +1,8 @@
 """
-Grok Responses API 异步客户端
+Responses API 异步客户端
 
-通过 xAI Responses API (/v1/responses) 调用 Grok 进行真正的联网搜索
-Responses API 支持 web_search 和 x_search 工具实现联网搜索
-
-注意：此模块适用于直连 xAI 官方 API 的场景。
+通过 /v1/responses 调用兼容接口进行联网搜索。
+Responses API 支持 web_search 和 x_search 工具实现联网搜索。
 """
 
 import json
@@ -46,14 +44,13 @@ async def grok_responses_search(
     proxy: str | None = None,
 ) -> dict[str, Any]:
     """
-    通过 xAI Responses API 进行联网搜索（异步）
+    通过 Responses API 进行联网搜索（异步）
 
     使用 /v1/responses 端点，支持 web_search 和 x_search 工具。
-    仅适用于直连 xAI 官方 API 的场景。
 
     Args:
         query: 搜索查询内容
-        base_url: xAI API 端点（如 https://api.x.ai）
+        base_url: API 端点
         api_key: API 密钥
         model: 模型名称
         timeout: 超时时间（秒）
@@ -82,7 +79,7 @@ async def grok_responses_search(
     started = time.time()
 
     # 验证必要参数
-    config = validate_config(base_url, api_key, started, base_url_label="xAI API 端点")
+    config = validate_config(base_url, api_key, started, base_url_label="API 端点")
     if isinstance(config, dict):
         return config
     base_url, api_key = config
@@ -122,7 +119,6 @@ async def grok_responses_search(
 
     # 构建 Responses API 请求体
     body: dict[str, Any] = {
-        "model": model,
         "input": [
             {"role": "system", "content": final_system_prompt},
             {"role": "user", "content": user_input},
@@ -132,6 +128,8 @@ async def grok_responses_search(
             {"type": "x_search"},
         ],
     }
+    if model:
+        body["model"] = model
 
     merge_extra_body(body, extra_body, {"model", "input", "tools", "stream"})
     headers = build_headers(api_key, extra_headers)

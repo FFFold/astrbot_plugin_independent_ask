@@ -23,7 +23,7 @@ If you feel even slightly unsure, search first, then answer with evidence.
 
 ## Configuration
 
-**AstrBot 插件自动配置（推荐）**：如果在 AstrBot 中已配置 `astrbot_plugin_grok_web_search` 插件，脚本会自动读取插件配置，无需额外设置。
+**AstrBot 插件自动配置（推荐）**：如果在 AstrBot 中已配置 `astrbot_plugin_independent_ask` 插件，脚本会自动读取插件配置，无需额外设置。
 
 **手动配置（备选）**：
 

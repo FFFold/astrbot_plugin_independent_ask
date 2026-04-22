@@ -27,7 +27,7 @@
 ### 俩种方式
 
 1. 在 AstrBot 插件市场搜索 `独立LLM请求` 点击安装
-2. 在插件界面右下角点击加号选择从链接安装输入 ` https://github.com/FFFold/astrbot_plugin_grok_web_search  `
+2. 在插件界面右下角点击加号选择从链接安装输入 ` https://github.com/FFFold/astrbot_plugin_independent_ask  `
 
 ## 配置
 
@@ -91,9 +91,9 @@
 
 | 深色主题 | 浅色主题 |
 |:---:|:---:|
-| ![深色主题](https://github.com/FFFold/astrbot_plugin_grok_web_search/blob/master/image/dark.png) | ![浅色主题](https://github.com/FFFold/astrbot_plugin_grok_web_search/blob/master/image/light.png) |
+| ![深色主题](https://github.com/FFFold/astrbot_plugin_independent_ask/blob/master/image/dark.png) | ![浅色主题](https://github.com/FFFold/astrbot_plugin_independent_ask/blob/master/image/light.png) |
 
-**字体说明**：首次启用时自动从清华镜像下载 Sarasa Term Slab SC 字体。也可在 `data/plugin_data/astrbot_plugin_grok_web_search/font/` 目录放入自定义 `.ttf` 字体文件。
+**字体说明**：首次启用时自动从清华镜像下载 Sarasa Term Slab SC 字体。也可在 `data/plugin_data/astrbot_plugin_independent_ask/font/` 目录放入自定义 `.ttf` 字体文件。
 
 ### HTTP 扩展
 
@@ -156,7 +156,7 @@ Python 3.12 的主要新特性包括:
 ## 项目结构
 
 ```
-astrbot_plugin_grok_web_search/
+astrbot_plugin_independent_ask/
 ├── main.py              # 插件主入口
 ├── api/                 # API 客户端
 │   ├── grok_chat.py     # Chat Completions API 客户端
@@ -178,16 +178,16 @@ astrbot_plugin_grok_web_search/
 
 - [grok-skill](https://github.com/Frankieli123/grok-skill) — 原始 Skill 脚本项目，感谢 [@a3180623](https://linux.do/u/a3180623/summary) 的开源贡献。
 - [GrokSearch](https://github.com/GuDaStudio/GrokSearch) — 网页内容抓取功能参考了该项目的实现，感谢 [GuDa Studio](https://github.com/GuDaStudio) 的开源贡献。
-- [@Stonesan233](https://github.com/Stonesan233) — PR [#5](https://github.com/FFFold/astrbot_plugin_grok_web_search/pull/5) 贡献了 Responses API 支持和代理配置。
+- [@Stonesan233](https://github.com/Stonesan233) — PR [#5](https://github.com/FFFold/astrbot_plugin_independent_ask/pull/5) 贡献了 Responses API 支持和代理配置。
 
 ## 更新日志
 
-查看 [CHANGELOG.md](https://github.com/FFFold/astrbot_plugin_grok_web_search/blob/master/CHANGELOG.md) 了解版本更新历史。
+查看 [CHANGELOG.md](https://github.com/FFFold/astrbot_plugin_independent_ask/blob/master/CHANGELOG.md) 了解版本更新历史。
 
 ## 支持
 
 - [AstrBot 插件开发文档](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [Issues](https://github.com/FFFold/astrbot_plugin_grok_web_search/issues)
+- [Issues](https://github.com/FFFold/astrbot_plugin_independent_ask/issues)
 
 ## 🔗 相关链接
 - [AstrBot](https://docs.astrbot.app/)

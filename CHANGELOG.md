@@ -8,7 +8,7 @@
 - 将用户指令从 `/grok` 改为 `/ask`
 - 删除 `grok_web_search` 和 `grok_web_fetch` 两个 LLM Tool
 - 插件展示名与文档描述调整为与特定供应商无关的独立请求定位
-- `metadata.yaml` 的仓库地址更新为 `https://github.com/FFFold/astrbot_plugin_grok_web_search`
+- `metadata.yaml` 的仓库地址更新为 `https://github.com/FFFold/astrbot_plugin_independent_ask`
 
 ## [1.3.1] - 2026-04-12
 

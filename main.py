@@ -970,6 +970,32 @@ class GrokSearchPlugin(Star):
             for comp in event.get_messages()
         )
 
+    @staticmethod
+    def _extract_query_text_from_message(event: AstrMessageEvent) -> str | None:
+        """Extract the full text after the ask command from the raw message."""
+        message = event.get_message_str().strip()
+        match = re.match(
+            r"^/?ask(?:\s+(.*))?$", message, flags=re.IGNORECASE | re.DOTALL
+        )
+        if match:
+            return (match.group(1) or "").strip()
+        return None
+
+    def _get_full_query_text(self, event: AstrMessageEvent, parsed_query: str) -> str:
+        """Prefer the framework-parsed query and only expand it when safe."""
+        query = str(parsed_query or "").strip()
+        raw_query = self._extract_query_text_from_message(event)
+        if raw_query is None:
+            return query
+
+        if not query:
+            return raw_query
+
+        if raw_query.startswith(query) and len(raw_query) > len(query):
+            return raw_query
+
+        return query
+
     @filter.command("ask")
     async def ask_cmd(self, event: AstrMessageEvent, query: GreedyStr = ""):
         """执行独立 LLM 请求
@@ -988,6 +1014,7 @@ class GrokSearchPlugin(Star):
         if not self._message_has_quoted(event):
             extra_text = None
 
+        query = self._get_full_query_text(event, query)
         route, query = self._resolve_route_and_query(query)
         effective_config = self._get_effective_config(route)
 

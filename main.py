@@ -416,7 +416,7 @@ class GrokSearchPlugin(Star):
                         return {"ok": False, "error": str(last_exc)}
                     await asyncio.sleep(retry_delay * attempts)
 
-        # 否则使用 HTTP 客户端向外部 Grok API 发起请求
+        # 否则使用 HTTP 客户端向外部兼容 API 发起请求
         try:
             # 获取代理配置
             proxy = self.config.get("proxy", "").strip() or None

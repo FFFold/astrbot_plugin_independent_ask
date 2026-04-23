@@ -31,7 +31,7 @@ async def grok_responses_search(
     query: str,
     base_url: str,
     api_key: str,
-    model: str = "grok-4-fast",
+    model: str = "",
     timeout: float = 60.0,
     extra_body: dict | None = None,
     extra_headers: dict | None = None,

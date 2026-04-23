@@ -124,12 +124,6 @@
     "editor_language": "markdown",
     "editor_theme": "vs-dark"
   },
-  "enable_fetch": {
-    "type": "bool",
-    "description": "是否启用网页抓取工具",
-    "hint": "保留兼容配置项，当前版本不再注册 LLM Tool",
-    "default": false
-  },
   "extra_body": {
     "type": "text",
     "description": "额外请求体参数（JSON 格式）",

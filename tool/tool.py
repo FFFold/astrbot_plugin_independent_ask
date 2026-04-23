@@ -30,19 +30,6 @@ DEFAULT_JSON_SYSTEM_PROMPT = (
     "IMPORTANT: Do NOT use Markdown formatting in the content field - use plain text only."
 )
 
-# 网页内容抓取提示词
-FETCH_SYSTEM_PROMPT = (
-    "You are a web content extraction expert. "
-    "Fetch the given URL and convert the page content to well-structured Markdown. "
-    "Rules: "
-    "1) Preserve ALL original text content completely - do NOT summarize or omit anything. "
-    "2) Maintain heading hierarchy (h1-h6 → #-######). "
-    "3) Convert tables, lists, code blocks, links, and images to proper Markdown syntax. "
-    "4) Remove ads, navigation, scripts, and non-content elements. "
-    "5) Prepend a metadata header: source URL, page title, fetch time. "
-    "6) Use UTF-8 encoding. Output ONLY the Markdown document, nothing else."
-)
-
 # 图片格式不支持时的标准错误返回
 IMAGE_UNSUPPORTED_ERROR: dict[str, str] = {
     "error": "❌ 图片格式不支持。当前接口仅支持 JPEG、PNG、GIF、WebP 格式，请转换后再试。",

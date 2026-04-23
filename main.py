@@ -62,6 +62,7 @@ class GrokSearchPlugin(Star):
         self.config = config or {}
         self._session: aiohttp.ClientSession | None = None
         self._card_fonts_ready = False
+        self._model_route_index: dict[str, dict] = {}
 
     @staticmethod
     def _normalize_route_alias(value: str) -> str:
@@ -130,10 +131,23 @@ class GrokSearchPlugin(Star):
 
         return route_index
 
+    def _refresh_model_route_index(self, log_warnings: bool = False) -> dict[str, dict]:
+        """Refresh the cached route index from current config."""
+        self._model_route_index = self._build_model_route_index(
+            log_warnings=log_warnings
+        )
+        return self._model_route_index
+
+    def _get_model_route_index(self) -> dict[str, dict]:
+        """Return the cached route index, rebuilding it if needed."""
+        if not self._model_route_index:
+            return self._refresh_model_route_index()
+        return self._model_route_index
+
     def _get_invokable_route_names(self) -> dict[str, list[str]]:
         """Return the route names and aliases that are actually invokable."""
         route_names: dict[str, list[str]] = {}
-        route_index = self._build_model_route_index()
+        route_index = self._get_model_route_index()
 
         for alias, route in route_index.items():
             route_name = str(route.get("route_name", "")).strip()
@@ -152,7 +166,7 @@ class GrokSearchPlugin(Star):
         parts = query.split(None, 1)
         first_token = parts[0]
         remainder = parts[1] if len(parts) > 1 else ""
-        route = self._build_model_route_index().get(
+        route = self._get_model_route_index().get(
             self._normalize_route_alias(first_token)
         )
         if route is None:
@@ -181,9 +195,27 @@ class GrokSearchPlugin(Star):
             "extra_headers",
             "proxy",
         }
+        inherit_when_empty = {
+            "provider",
+            "base_url",
+            "api_key",
+        }
         for key in override_keys:
-            if key in route:
-                effective_config[key] = route[key]
+            if key not in route:
+                continue
+
+            value = route[key]
+            if value is None:
+                continue
+
+            if (
+                key in inherit_when_empty
+                and isinstance(value, str)
+                and not value.strip()
+            ):
+                continue
+
+            effective_config[key] = value
 
         return effective_config
 
@@ -266,7 +298,7 @@ class GrokSearchPlugin(Star):
         route_count = len(self._get_enabled_model_routes())
         if route_count:
             logger.info(f"[{PLUGIN_NAME}] 已加载 {route_count} 个启用的模型路由")
-        self._build_model_route_index(log_warnings=True)
+        self._refresh_model_route_index(log_warnings=True)
 
         for route in self._get_enabled_model_routes():
             route_name = str(route.get("route_name", "")).strip()

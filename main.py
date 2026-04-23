@@ -73,8 +73,21 @@ class GrokSearchPlugin(Star):
         """Return configured model routes as a normalized list."""
         routes = self.config.get("model_routes", [])
         if not isinstance(routes, list):
+            logger.warning(
+                f"[{PLUGIN_NAME}] model_routes 配置类型错误，预期为 list，实际为 {type(routes).__name__}"
+            )
             return []
-        return [route for route in routes if isinstance(route, dict)]
+
+        normalized_routes: list[dict] = []
+        for idx, route in enumerate(routes):
+            if not isinstance(route, dict):
+                logger.warning(
+                    f"[{PLUGIN_NAME}] model_routes[{idx}] 配置类型错误，预期为 dict，实际为 {type(route).__name__}"
+                )
+                continue
+            normalized_routes.append(route)
+
+        return normalized_routes
 
     def _get_enabled_model_routes(self) -> list[dict]:
         """Return enabled routes with valid names."""
@@ -166,11 +179,18 @@ class GrokSearchPlugin(Star):
         route_names: dict[str, list[str]] = {}
         route_index = self._get_model_route_index()
 
-        for alias, route in route_index.items():
+        for normalized_alias, route in route_index.items():
             route_name = str(route.get("route_name", "")).strip()
             if not route_name:
                 continue
-            route_names.setdefault(route_name, []).append(alias)
+
+            display_alias = normalized_alias
+            for alias in self._get_route_aliases(route):
+                if self._normalize_route_alias(alias) == normalized_alias:
+                    display_alias = alias
+                    break
+
+            route_names.setdefault(route_name, []).append(display_alias)
 
         return route_names
 

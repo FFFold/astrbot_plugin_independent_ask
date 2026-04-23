@@ -197,6 +197,7 @@ class GrokSearchPlugin(Star):
         }
         inherit_when_empty = {
             "provider",
+            "model",
             "base_url",
             "api_key",
         }

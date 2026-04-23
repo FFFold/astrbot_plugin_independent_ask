@@ -41,6 +41,7 @@ from .tool.tool import (
 )
 
 PLUGIN_NAME = "astrbot_plugin_independent_ask"
+RESERVED_ROUTE_ALIASES = {"help"}
 
 
 def _fmt_tokens(n: int) -> str:
@@ -62,6 +63,209 @@ class GrokSearchPlugin(Star):
         self.config = config or {}
         self._session: aiohttp.ClientSession | None = None
         self._card_fonts_ready = False
+        self._model_route_index: dict[str, dict] | None = None
+
+    @staticmethod
+    def _normalize_route_alias(value: str) -> str:
+        """Normalize a route alias for case-insensitive matching."""
+        return str(value or "").strip().lower()
+
+    def _get_model_routes(self) -> list[dict]:
+        """Return configured model routes as a normalized list."""
+        routes = self.config.get("model_routes", [])
+        if not isinstance(routes, list):
+            logger.warning(
+                f"[{PLUGIN_NAME}] model_routes 配置类型错误，预期为 list，实际为 {type(routes).__name__}"
+            )
+            return []
+
+        normalized_routes: list[dict] = []
+        for idx, route in enumerate(routes):
+            if not isinstance(route, dict):
+                logger.warning(
+                    f"[{PLUGIN_NAME}] model_routes[{idx}] 配置类型错误，预期为 dict，实际为 {type(route).__name__}"
+                )
+                continue
+            normalized_routes.append(route)
+
+        return normalized_routes
+
+    def _get_enabled_model_routes(self) -> list[dict]:
+        """Return enabled routes with valid names."""
+        enabled_routes: list[dict] = []
+        for route in self._get_model_routes():
+            route_name = str(route.get("route_name", "")).strip()
+            if route.get("enabled", True) and route_name:
+                enabled_routes.append(route)
+        return enabled_routes
+
+    def _get_route_aliases(self, route: dict) -> list[str]:
+        """Collect the primary route name and all aliases, de-duplicated per route."""
+        aliases: list[str] = []
+        seen_normalized: set[str] = set()
+
+        route_name = str(route.get("route_name", "")).strip()
+        if route_name:
+            normalized = self._normalize_route_alias(route_name)
+            if normalized and normalized not in seen_normalized:
+                seen_normalized.add(normalized)
+                aliases.append(route_name)
+
+        raw_aliases = route.get("aliases", [])
+        if isinstance(raw_aliases, list):
+            for alias in raw_aliases:
+                alias_str = str(alias or "").strip()
+                if not alias_str:
+                    continue
+
+                normalized = self._normalize_route_alias(alias_str)
+                if normalized and normalized not in seen_normalized:
+                    seen_normalized.add(normalized)
+                    aliases.append(alias_str)
+
+        return aliases
+
+    def _build_model_route_index(self, log_warnings: bool = False) -> dict[str, dict]:
+        """Build an alias-to-route map for enabled routes."""
+        route_index: dict[str, dict] = {}
+
+        for route in self._get_enabled_model_routes():
+            route_name = str(route.get("route_name", "")).strip()
+            for alias in self._get_route_aliases(route):
+                normalized = self._normalize_route_alias(alias)
+                if not normalized:
+                    continue
+                if normalized in RESERVED_ROUTE_ALIASES:
+                    if log_warnings:
+                        logger.warning(
+                            f"[{PLUGIN_NAME}] 模型路由 '{route_name}' 使用了保留名称 '{alias}'，已忽略该别名"
+                        )
+                    continue
+                if normalized in route_index:
+                    if log_warnings:
+                        existed = str(
+                            route_index[normalized].get("route_name", "")
+                        ).strip()
+                        logger.warning(
+                            f"[{PLUGIN_NAME}] 模型路由别名冲突: '{alias}' 同时属于 '{existed}' 和 '{route_name}'，后者已忽略"
+                        )
+                    continue
+                route_index[normalized] = route
+
+        return route_index
+
+    def _refresh_model_route_index(self, log_warnings: bool = False) -> dict[str, dict]:
+        """Refresh the cached route index from current config."""
+        self._model_route_index = self._build_model_route_index(
+            log_warnings=log_warnings
+        )
+        return self._model_route_index
+
+    def _get_model_route_index(self) -> dict[str, dict]:
+        """Return the cached route index, rebuilding it if needed."""
+        if self._model_route_index is None:
+            return self._refresh_model_route_index()
+        return self._model_route_index
+
+    def _route_has_distinct_connection_config(self, route: dict) -> bool:
+        """Return True when a route changes connection-related settings."""
+        distinct_keys = {
+            "use_builtin_provider",
+            "provider",
+            "model",
+            "use_responses_api",
+            "base_url",
+            "api_key",
+            "proxy",
+        }
+        effective_config = self._get_effective_config(route)
+        global_config = self._get_effective_config()
+        return any(
+            effective_config.get(key) != global_config.get(key) for key in distinct_keys
+        )
+
+    def _get_invokable_route_names(self) -> dict[str, list[str]]:
+        """Return the route names and aliases that are actually invokable."""
+        route_names: dict[str, list[str]] = {}
+        route_index = self._get_model_route_index()
+
+        for normalized_alias, route in route_index.items():
+            route_name = str(route.get("route_name", "")).strip()
+            if not route_name:
+                continue
+
+            display_alias = normalized_alias
+            for alias in self._get_route_aliases(route):
+                if self._normalize_route_alias(alias) == normalized_alias:
+                    display_alias = alias
+                    break
+
+            route_names.setdefault(route_name, []).append(display_alias)
+
+        return route_names
+
+    def _resolve_route_and_query(self, raw_query: str) -> tuple[dict | None, str]:
+        """Resolve the first token as a model route when configured."""
+        query = str(raw_query or "").strip()
+        if not query:
+            return None, ""
+
+        parts = query.split(None, 1)
+        first_token = parts[0]
+        remainder = parts[1] if len(parts) > 1 else ""
+        route = self._get_model_route_index().get(
+            self._normalize_route_alias(first_token)
+        )
+        if route is None:
+            return None, query
+
+        return route, remainder.strip()
+
+    def _get_effective_config(self, route: dict | None = None) -> dict:
+        """Merge the global config with a route-specific override."""
+        effective_config = dict(self.config)
+        if not route:
+            return effective_config
+
+        override_keys = {
+            "use_builtin_provider",
+            "provider",
+            "model",
+            "use_responses_api",
+            "base_url",
+            "api_key",
+            "timeout_seconds",
+            "enable_thinking",
+            "thinking_budget",
+            "custom_system_prompt",
+            "extra_body",
+            "extra_headers",
+            "proxy",
+        }
+        inherit_when_empty = {
+            "provider",
+            "model",
+            "base_url",
+            "api_key",
+        }
+        for key in override_keys:
+            if key not in route:
+                continue
+
+            value = route[key]
+            if value is None:
+                continue
+
+            if (
+                key in inherit_when_empty
+                and isinstance(value, str)
+                and not value.strip()
+            ):
+                continue
+
+            effective_config[key] = value
+
+        return effective_config
 
     async def _extract_content_from_event(
         self, event: AstrMessageEvent
@@ -139,6 +343,30 @@ class GrokSearchPlugin(Star):
         if self.config.get("render_as_image", False):
             asyncio.get_event_loop().run_in_executor(None, self._init_fonts)
 
+        enabled_routes = self._get_enabled_model_routes()
+        route_count = len(enabled_routes)
+        if route_count:
+            logger.info(f"[{PLUGIN_NAME}] 已加载 {route_count} 个启用的模型路由")
+        self._refresh_model_route_index(log_warnings=True)
+
+        for route in enabled_routes:
+            route_name = str(route.get("route_name", "")).strip()
+            if route.get("use_builtin_provider", False):
+                provider_id = str(route.get("provider", "")).strip()
+                if not provider_id:
+                    logger.warning(
+                        f"[{PLUGIN_NAME}] 模型路由 '{route_name}' 启用了内置供应商，但未配置 provider"
+                    )
+                continue
+
+            if not self._route_has_distinct_connection_config(route):
+                continue
+
+            await self._validate_config(
+                self._get_effective_config(route),
+                config_name=f"模型路由 '{route_name}' 的",
+            )
+
         # 如果启用使用 AstrBot 自带供应商，则推迟完整初始化
         if self.config.get("use_builtin_provider", False):
             logger.info(
@@ -153,25 +381,28 @@ class GrokSearchPlugin(Star):
         if self.config.get("reuse_session", False):
             self._session = aiohttp.ClientSession()
 
-    async def _validate_config(self):
+    async def _validate_config(
+        self, config: dict | None = None, config_name: str = "默认配置"
+    ):
         """验证必要配置，并通过 v1/models 接口检查连通性"""
-        base_url = normalize_base_url(self.config.get("base_url", ""))
-        api_key = normalize_api_key(self.config.get("api_key", ""))
+        cfg = config or self.config
+        base_url = normalize_base_url(cfg.get("base_url", ""))
+        api_key = normalize_api_key(cfg.get("api_key", ""))
         if not base_url:
             logger.warning(
-                f"[{PLUGIN_NAME}] 缺少 base_url 配置，请在插件设置中填写 API 端点"
+                f"[{PLUGIN_NAME}] {config_name}缺少 base_url 配置，请在插件设置中填写 API 端点"
             )
             return
         if not api_key:
             logger.warning(
-                f"[{PLUGIN_NAME}] 缺少 api_key 配置，请在插件设置中填写 API 密钥"
+                f"[{PLUGIN_NAME}] {config_name}缺少 api_key 配置，请在插件设置中填写 API 密钥"
             )
             return
 
         # 通过 v1/models 接口验证连通性和密钥有效性
         models_url = f"{base_url}/v1/models"
         headers = {"Authorization": f"Bearer {api_key}"}
-        extra_headers = self._parse_json_config("extra_headers")
+        extra_headers = self._parse_json_config("extra_headers", cfg)
         if extra_headers:
             protected = {"authorization", "content-type"}
             for key, value in extra_headers.items():
@@ -179,7 +410,7 @@ class GrokSearchPlugin(Star):
                     headers[str(key)] = str(value)
 
         # 获取代理配置
-        proxy = self.config.get("proxy", "").strip() or None
+        proxy = str(cfg.get("proxy", "")).strip() or None
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -191,29 +422,29 @@ class GrokSearchPlugin(Star):
                 ) as resp:
                     if resp.status == 401:
                         logger.warning(
-                            f"[{PLUGIN_NAME}] API 密钥无效（401），请检查 api_key 配置"
+                            f"[{PLUGIN_NAME}] {config_name}API 密钥无效（401），请检查 api_key 配置"
                         )
                     elif resp.status == 403:
                         logger.warning(
-                            f"[{PLUGIN_NAME}] API 密钥权限不足（403），请检查 api_key 权限"
+                            f"[{PLUGIN_NAME}] {config_name}API 密钥权限不足（403），请检查 api_key 权限"
                         )
                     elif resp.status == 404:
                         logger.warning(
-                            f"[{PLUGIN_NAME}] v1/models 端点不存在（404），请检查 base_url 配置是否正确"
+                            f"[{PLUGIN_NAME}] {config_name}v1/models 端点不存在（404），请检查 base_url 配置是否正确"
                         )
                     elif resp.status != 200:
                         logger.warning(
-                            f"[{PLUGIN_NAME}] API 连通性检查返回 HTTP {resp.status}，请确认配置"
+                            f"[{PLUGIN_NAME}] {config_name}API 连通性检查返回 HTTP {resp.status}，请确认配置"
                         )
                     else:
-                        logger.info(f"[{PLUGIN_NAME}] API 连通性检查通过")
+                        logger.info(f"[{PLUGIN_NAME}] {config_name}API 连通性检查通过")
         except aiohttp.ClientError as e:
             logger.warning(
-                f"[{PLUGIN_NAME}] API 连通性检查失败（网络错误）: {e}，请检查 base_url 配置"
+                f"[{PLUGIN_NAME}] {config_name}API 连通性检查失败（网络错误）: {e}，请检查 base_url 配置"
             )
         except asyncio.TimeoutError:
             logger.warning(
-                f"[{PLUGIN_NAME}] API 连通性检查超时，请检查 base_url 是否可达"
+                f"[{PLUGIN_NAME}] {config_name}API 连通性检查超时，请检查 base_url 是否可达"
             )
 
     def _get_plugin_data_path(self) -> Path:
@@ -231,9 +462,10 @@ class GrokSearchPlugin(Star):
         plugin_data_dir.mkdir(parents=True, exist_ok=True)
         return plugin_data_dir
 
-    def _parse_json_config(self, key: str) -> dict:
+    def _parse_json_config(self, key: str, config: dict | None = None) -> dict:
         """解析 JSON 格式的配置项"""
-        value = self.config.get(key, "")
+        cfg = config or self.config
+        value = cfg.get(key, "")
         if isinstance(value, dict):
             return value
         if isinstance(value, str):
@@ -249,6 +481,7 @@ class GrokSearchPlugin(Star):
         system_prompt: str | None = None,
         use_retry: bool = False,
         images: list[str] | None = None,
+        effective_config: dict | None = None,
     ) -> dict:
         """Execute a search.
 
@@ -258,9 +491,11 @@ class GrokSearchPlugin(Star):
             use_retry: Whether to enable retry (command invocation only)
             images: Optional list of base64-encoded images for multimodal queries
         """
+        cfg = effective_config or self.config
+
         # 安全解析 timeout 配置
         try:
-            timeout_val = self.config.get("timeout_seconds", 60)
+            timeout_val = cfg.get("timeout_seconds", 60)
             timeout = float(timeout_val) if timeout_val is not None else 60.0
             if timeout <= 0:
                 timeout = 60.0
@@ -269,7 +504,7 @@ class GrokSearchPlugin(Star):
 
         # 安全解析 thinking_budget 配置
         try:
-            thinking_budget_val = self.config.get("thinking_budget", 32000)
+            thinking_budget_val = cfg.get("thinking_budget", 32000)
             thinking_budget = (
                 int(thinking_budget_val) if thinking_budget_val is not None else 32000
             )
@@ -292,7 +527,7 @@ class GrokSearchPlugin(Star):
                 retryable_status_codes = set(retryable_codes)
 
         # 自定义系统提示词
-        custom_prompt = self.config.get("custom_system_prompt", "")
+        custom_prompt = cfg.get("custom_system_prompt", "")
         if custom_prompt and isinstance(custom_prompt, str) and custom_prompt.strip():
             # 如果有自定义提示词且没有传入其他提示词，使用配置中的自定义提示词
             if system_prompt is None:
@@ -301,14 +536,14 @@ class GrokSearchPlugin(Star):
         if system_prompt is None:
             system_prompt = DEFAULT_JSON_SYSTEM_PROMPT
         # 如果启用了使用 AstrBot 自带供应商，通过 AstrBot provider 接口调用
-        if self.config.get("use_builtin_provider", False):
+        if cfg.get("use_builtin_provider", False):
             attempts = 0
             last_exc = None
             started = time.time()
             while True:
                 try:
                     # 严格按配置获取 provider
-                    configured_provider_id = self.config.get("provider", "")
+                    configured_provider_id = cfg.get("provider", "")
                     if not configured_provider_id:
                         return {
                             "ok": False,
@@ -419,19 +654,19 @@ class GrokSearchPlugin(Star):
         # 否则使用 HTTP 客户端向外部兼容 API 发起请求
         try:
             # 获取代理配置
-            proxy = self.config.get("proxy", "").strip() or None
+            proxy = str(cfg.get("proxy", "")).strip() or None
 
             # 根据配置选择 API 模式
-            if self.config.get("use_responses_api", False):
+            if cfg.get("use_responses_api", False):
                 # 使用 Responses API（/v1/responses）
                 result = await grok_responses_search(
                     query=query,
-                    base_url=self.config.get("base_url", ""),
-                    api_key=self.config.get("api_key", ""),
-                    model=self.config.get("model", ""),
+                    base_url=cfg.get("base_url", ""),
+                    api_key=cfg.get("api_key", ""),
+                    model=cfg.get("model", ""),
                     timeout=timeout,
-                    extra_body=self._parse_json_config("extra_body"),
-                    extra_headers=self._parse_json_config("extra_headers"),
+                    extra_body=self._parse_json_config("extra_body", cfg),
+                    extra_headers=self._parse_json_config("extra_headers", cfg),
                     session=self._session,
                     system_prompt=system_prompt,
                     max_retries=max_retries,
@@ -444,14 +679,14 @@ class GrokSearchPlugin(Star):
                 # 使用 Chat Completions API（/v1/chat/completions）
                 result = await grok_search(
                     query=query,
-                    base_url=self.config.get("base_url", ""),
-                    api_key=self.config.get("api_key", ""),
-                    model=self.config.get("model", ""),
+                    base_url=cfg.get("base_url", ""),
+                    api_key=cfg.get("api_key", ""),
+                    model=cfg.get("model", ""),
                     timeout=timeout,
-                    enable_thinking=self.config.get("enable_thinking", True),
+                    enable_thinking=cfg.get("enable_thinking", True),
                     thinking_budget=thinking_budget,
-                    extra_body=self._parse_json_config("extra_body"),
-                    extra_headers=self._parse_json_config("extra_headers"),
+                    extra_body=self._parse_json_config("extra_body", cfg),
+                    extra_headers=self._parse_json_config("extra_headers", cfg),
                     session=self._session,
                     system_prompt=system_prompt,
                     max_retries=max_retries,
@@ -685,17 +920,36 @@ class GrokSearchPlugin(Star):
         else:
             prompt_info = "内置中文（/ask 指令）"
 
+        route_lines = []
+        for route_name, invokable_aliases in self._get_invokable_route_names().items():
+            route_name_normalized = self._normalize_route_alias(route_name)
+            aliases = [
+                alias
+                for alias in invokable_aliases
+                if self._normalize_route_alias(alias) != route_name_normalized
+            ]
+            aliases_text = f" (别名: {', '.join(aliases)})" if aliases else ""
+            route_lines.append(f"  - {route_name}{aliases_text}")
+
+        routes_block = "\n可用模型路由:\n"
+        if route_lines:
+            routes_block += "\n".join(route_lines)
+        else:
+            routes_block += "  - 未配置"
+
         return (
             "独立 LLM 请求\n"
             "\n"
             "用法:\n"
             "  /ask help            显示此帮助\n"
             "  /ask <请求内容>      发起独立请求\n"
+            "  /ask <模型路由> <请求内容>  使用指定模型路由发起请求\n"
             "\n"
             "示例:\n"
             "  /ask Python 3.12 有什么新特性\n"
             "  /ask 帮我总结今天的 AI 新闻\n"
             "  /ask 翻译这张图片里的文字\n"
+            "  /ask gemma 如何学习日语\n"
             "\n"
             "调用方式:\n"
             "  - /ask 指令：直接发起一次独立请求并返回结果\n"
@@ -705,6 +959,7 @@ class GrokSearchPlugin(Star):
             f"  供应商: {provider_id}\n"
             f"  模型: {model}\n"
             f"  系统提示词: {prompt_info}"
+            f"{routes_block}"
         )
 
     @staticmethod
@@ -733,8 +988,11 @@ class GrokSearchPlugin(Star):
         if not self._message_has_quoted(event):
             extra_text = None
 
-        # 仅在明确输入 help 时显示帮助
-        if query.strip().lower() == "help":
+        route, query = self._resolve_route_and_query(query)
+        effective_config = self._get_effective_config(route)
+
+        # 仅在未命中模型路由且明确输入 help 时显示帮助
+        if route is None and query.strip().lower() == "help":
             yield event.plain_result(self._help_text())
             return
 
@@ -756,7 +1014,7 @@ class GrokSearchPlugin(Star):
             query = "请搜索这张图片的内容"
 
         # 优先使用自定义提示词，未设置则使用内置提示词（英文指令 + JSON 格式 + 中文回复）
-        custom_prompt = self.config.get("custom_system_prompt", "")
+        custom_prompt = effective_config.get("custom_system_prompt", "")
         if custom_prompt and isinstance(custom_prompt, str) and custom_prompt.strip():
             cmd_system_prompt = custom_prompt.strip()
         else:
@@ -774,6 +1032,7 @@ class GrokSearchPlugin(Star):
             system_prompt=cmd_system_prompt,
             use_retry=True,
             images=images or None,
+            effective_config=effective_config,
         )
         event.should_call_llm(True)
 
@@ -787,7 +1046,7 @@ class GrokSearchPlugin(Star):
             elapsed = result.get("elapsed_ms", 0)
             usage = result.get("usage") or {}
             total_tokens = usage.get("total_tokens", 0)
-            model = self.config.get("model", "")
+            model = effective_config.get("model", "")
             theme = self.config.get("card_theme", "auto")
 
             import tempfile

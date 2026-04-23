@@ -18,6 +18,7 @@
 ## 功能
 
 - `/ask` 指令 - 直接发起一次独立请求，支持附带图片进行多模态处理
+- 模型路由 - 通过 `/ask <模型路由> <请求内容>` 为不同模型或供应商分别发起请求
 - 搜索结果图片卡片 - 基于 Pillow 纯本地渲染，面板式布局，支持日/夜自动主题
 
 ## 安装
@@ -55,6 +56,77 @@
 | `max_retries` | int | 否 | 最大重试次数（默认: 3） |
 | `retry_delay` | float | 否 | 重试间隔时间（默认: 1 秒），429 时优先使用 Retry-After 头 |
 | `retryable_status_codes` | list | 否 | 可重试的 HTTP 状态码（默认: [429, 500, 502, 503, 504]） |
+
+### 模型路由
+
+`model_routes` 用于为 `/ask` 增加按首个参数切换模型的能力。命中路由后，插件会使用该路由的配置覆盖默认请求配置。
+
+适用场景：
+
+- `/ask gemma 如何学习日语？`
+- `/ask deepseek 番茄炒蛋怎么做？`
+- `/ask gpt5.4 美国总统是谁？`
+
+每个路由项支持这些字段：
+
+| 配置项 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| `enabled` | bool | 否 | 是否启用该路由（默认: true） |
+| `route_name` | string | 是 | 路由名称，例如 `gemma` |
+| `aliases` | list | 否 | 路由别名列表，例如 `gpt54` |
+| `use_builtin_provider` | bool | 否 | 是否对该路由使用 AstrBot 自带供应商 |
+| `provider` | string | 条件 | 该路由使用内置供应商时必填 |
+| `model` | string | 否 | 该路由的模型名称 |
+| `use_responses_api` | bool | 否 | 该路由是否使用 `/v1/responses` |
+| `base_url` | string | 条件 | 该路由使用自定义 HTTP 时必填 |
+| `api_key` | string | 条件 | 该路由使用自定义 HTTP 时必填 |
+| `timeout_seconds` | int | 否 | 该路由的超时时间 |
+| `enable_thinking` | bool | 否 | 该路由是否启用 thinking |
+| `thinking_budget` | int | 否 | 该路由的 thinking token 预算 |
+| `custom_system_prompt` | text | 否 | 该路由的自定义系统提示词 |
+| `extra_body` | JSON | 否 | 该路由的额外请求体参数 |
+| `extra_headers` | JSON | 否 | 该路由的额外请求头 |
+| `proxy` | string | 否 | 该路由的 HTTP 代理 |
+
+说明：
+
+- `show_sources`、`render_as_image`、`max_sources` 等输出表现目前仍沿用全局配置
+- 路由名称和别名按不区分大小写匹配
+- `/ask help` 仍显示帮助；只有首个参数命中路由时，才会切换到对应模型
+- 路由后可使用空格、换行或制表符分隔请求内容
+- 路由配置采用“按字段覆盖”的继承方式：未填写时默认继承全局配置
+- `provider`、`model`、`base_url`、`api_key` 留空时会继续继承全局值，适合多个路由共用同一套供应商连接信息
+- `custom_system_prompt` 留空时不会继承全局提示词，而是回退到插件内置提示词
+- `proxy`、`extra_body`、`extra_headers` 可显式填写为空值，用于清空对应的全局设置
+- `text` 类型表示 AstrBot WebUI 中的多行文本输入字段，与普通 `string` 单行输入相对应
+
+示例配置：
+
+```json
+[
+  {
+    "enabled": true,
+    "route_name": "gemma",
+    "use_builtin_provider": true,
+    "provider": "gemma_provider"
+  },
+  {
+    "enabled": true,
+    "route_name": "deepseek",
+    "model": "deepseek-chat",
+    "base_url": "https://api.example.com",
+    "api_key": "sk-xxxx"
+  },
+  {
+    "enabled": true,
+    "route_name": "gpt5.4",
+    "aliases": ["gpt54"],
+    "model": "gpt-5.4",
+    "base_url": "https://api.openai-compatible.example",
+    "api_key": "sk-yyyy"
+  }
+]
+```
 
 ### 输出设置
 
@@ -105,6 +177,10 @@
 ```
 /ask Python 3.12 有什么新特性
 /ask 帮我总结今天的 AI 新闻
+/ask gemma 如何学习日语
+/ask deepseek	番茄炒蛋怎么做
+/ask gpt5.4
+美国总统是谁？
 /ask help               # 显示帮助和当前配置状态
 ```
 

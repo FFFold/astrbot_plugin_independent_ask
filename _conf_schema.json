@@ -83,13 +83,7 @@
     "type": "list",
     "description": "可重试的 HTTP 状态码",
     "hint": "自定义重试的 HTTP 状态码列表",
-    "default": [
-      429,
-      500,
-      502,
-      503,
-      504
-    ]
+    "default": [429, 500, 502, 503, 504]
   },
   "show_sources": {
     "type": "bool",
@@ -123,6 +117,124 @@
     "editor_mode": true,
     "editor_language": "markdown",
     "editor_theme": "vs-dark"
+  },
+  "model_routes": {
+    "type": "template_list",
+    "description": "模型路由配置",
+    "hint": "配置后可通过 /ask <模型路由> <请求内容> 切换到不同模型或供应商",
+    "templates": {
+      "route_item": {
+        "name": "模型路由",
+        "hint": "例如 gemma、deepseek、gpt5.4",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "是否启用",
+            "hint": "关闭后保留配置但不参与 /ask 路由匹配",
+            "default": true
+          },
+          "route_name": {
+            "type": "string",
+            "description": "路由名称",
+            "hint": "例如 gemma，用户可通过 /ask gemma <问题> 调用",
+            "default": ""
+          },
+          "aliases": {
+            "type": "list",
+            "description": "路由别名",
+            "hint": "可选，例如 [\"gpt\", \"gpt54\"]；为空则仅使用 route_name",
+            "default": []
+          },
+          "use_builtin_provider": {
+            "type": "bool",
+            "description": "是否使用 AstrBot 自带供应商",
+            "hint": "启用后使用下方 provider；关闭后使用 base_url/api_key/model",
+            "default": false
+          },
+          "provider": {
+            "_special": "select_provider",
+            "type": "string",
+            "description": "选择要使用的 LLM 供应商",
+            "hint": "仅内置供应商模式生效；留空继承全局 provider"
+          },
+          "model": {
+            "type": "string",
+            "description": "模型名称",
+            "hint": "自定义 HTTP 模式下生效；留空继承全局 model",
+            "default": ""
+          },
+          "use_responses_api": {
+            "type": "bool",
+            "description": "使用 /v1/responses 接口",
+            "hint": "启用后使用 /v1/responses；关闭则使用 /v1/chat/completions",
+            "default": false
+          },
+          "base_url": {
+            "type": "string",
+            "description": "API 端点 URL",
+            "hint": "自定义 HTTP 模式下使用；留空继承全局 base_url",
+            "default": ""
+          },
+          "api_key": {
+            "type": "string",
+            "description": "API 密钥",
+            "hint": "自定义 HTTP 模式下使用；留空继承全局 api_key",
+            "default": ""
+          },
+          "timeout_seconds": {
+            "type": "int",
+            "description": "请求超时时间（秒）",
+            "hint": "该路由的请求超时时间",
+            "default": 60
+          },
+          "enable_thinking": {
+            "type": "bool",
+            "description": "是否开启思考模式",
+            "hint": "该路由是否开启 thinking",
+            "default": true
+          },
+          "thinking_budget": {
+            "type": "int",
+            "description": "思考 token 预算",
+            "hint": "该路由的 thinking token 预算",
+            "default": 32000
+          },
+          "custom_system_prompt": {
+            "type": "text",
+            "description": "自定义系统提示词",
+            "hint": "留空回退到插件内置提示词，不继承全局提示词",
+            "default": "",
+            "editor_mode": true,
+            "editor_language": "markdown",
+            "editor_theme": "vs-dark"
+          },
+          "extra_body": {
+            "type": "text",
+            "description": "额外请求体参数（JSON 格式）",
+            "hint": "留空可清空全局 extra_body",
+            "default": "",
+            "editor_mode": true,
+            "editor_language": "json",
+            "editor_theme": "vs-dark"
+          },
+          "extra_headers": {
+            "type": "text",
+            "description": "额外请求头（JSON 格式）",
+            "hint": "留空可清空全局 extra_headers",
+            "default": "",
+            "editor_mode": true,
+            "editor_language": "json",
+            "editor_theme": "vs-dark"
+          },
+          "proxy": {
+            "type": "string",
+            "description": "HTTP 代理地址",
+            "hint": "留空可清空全局代理",
+            "default": ""
+          }
+        }
+      }
+    }
   },
   "extra_body": {
     "type": "text",

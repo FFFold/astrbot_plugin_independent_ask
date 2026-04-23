@@ -41,6 +41,7 @@ from .tool.tool import (
 )
 
 PLUGIN_NAME = "astrbot_plugin_independent_ask"
+RESERVED_ROUTE_ALIASES = {"help"}
 
 
 def _fmt_tokens(n: int) -> str:
@@ -99,17 +100,27 @@ class GrokSearchPlugin(Star):
         return enabled_routes
 
     def _get_route_aliases(self, route: dict) -> list[str]:
-        """Collect the primary route name and all aliases."""
+        """Collect the primary route name and all aliases, de-duplicated per route."""
         aliases: list[str] = []
+        seen_normalized: set[str] = set()
+
         route_name = str(route.get("route_name", "")).strip()
         if route_name:
-            aliases.append(route_name)
+            normalized = self._normalize_route_alias(route_name)
+            if normalized and normalized not in seen_normalized:
+                seen_normalized.add(normalized)
+                aliases.append(route_name)
 
         raw_aliases = route.get("aliases", [])
         if isinstance(raw_aliases, list):
             for alias in raw_aliases:
                 alias_str = str(alias or "").strip()
-                if alias_str:
+                if not alias_str:
+                    continue
+
+                normalized = self._normalize_route_alias(alias_str)
+                if normalized and normalized not in seen_normalized:
+                    seen_normalized.add(normalized)
                     aliases.append(alias_str)
 
         return aliases
@@ -117,7 +128,6 @@ class GrokSearchPlugin(Star):
     def _build_model_route_index(self, log_warnings: bool = False) -> dict[str, dict]:
         """Build an alias-to-route map for enabled routes."""
         route_index: dict[str, dict] = {}
-        reserved_aliases = {"help"}
 
         for route in self._get_enabled_model_routes():
             route_name = str(route.get("route_name", "")).strip()
@@ -125,7 +135,7 @@ class GrokSearchPlugin(Star):
                 normalized = self._normalize_route_alias(alias)
                 if not normalized:
                     continue
-                if normalized in reserved_aliases:
+                if normalized in RESERVED_ROUTE_ALIASES:
                     if log_warnings:
                         logger.warning(
                             f"[{PLUGIN_NAME}] 模型路由 '{route_name}' 使用了保留名称 '{alias}'，已忽略该别名"
@@ -912,8 +922,11 @@ class GrokSearchPlugin(Star):
 
         route_lines = []
         for route_name, invokable_aliases in self._get_invokable_route_names().items():
+            route_name_normalized = self._normalize_route_alias(route_name)
             aliases = [
-                alias for alias in invokable_aliases if alias != route_name.lower()
+                alias
+                for alias in invokable_aliases
+                if self._normalize_route_alias(alias) != route_name_normalized
             ]
             aliases_text = f" (别名: {', '.join(aliases)})" if aliases else ""
             route_lines.append(f"  - {route_name}{aliases_text}")

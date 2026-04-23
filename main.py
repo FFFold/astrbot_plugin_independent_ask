@@ -62,7 +62,7 @@ class GrokSearchPlugin(Star):
         self.config = config or {}
         self._session: aiohttp.ClientSession | None = None
         self._card_fonts_ready = False
-        self._model_route_index: dict[str, dict] = {}
+        self._model_route_index: dict[str, dict] | None = None
 
     @staticmethod
     def _normalize_route_alias(value: str) -> str:
@@ -140,9 +140,26 @@ class GrokSearchPlugin(Star):
 
     def _get_model_route_index(self) -> dict[str, dict]:
         """Return the cached route index, rebuilding it if needed."""
-        if not self._model_route_index:
+        if self._model_route_index is None:
             return self._refresh_model_route_index()
         return self._model_route_index
+
+    def _route_has_distinct_connection_config(self, route: dict) -> bool:
+        """Return True when a route changes connection-related settings."""
+        distinct_keys = {
+            "use_builtin_provider",
+            "provider",
+            "model",
+            "use_responses_api",
+            "base_url",
+            "api_key",
+            "proxy",
+        }
+        effective_config = self._get_effective_config(route)
+        global_config = self._get_effective_config()
+        return any(
+            effective_config.get(key) != global_config.get(key) for key in distinct_keys
+        )
 
     def _get_invokable_route_names(self) -> dict[str, list[str]]:
         """Return the route names and aliases that are actually invokable."""
@@ -296,12 +313,13 @@ class GrokSearchPlugin(Star):
         if self.config.get("render_as_image", False):
             asyncio.get_event_loop().run_in_executor(None, self._init_fonts)
 
-        route_count = len(self._get_enabled_model_routes())
+        enabled_routes = self._get_enabled_model_routes()
+        route_count = len(enabled_routes)
         if route_count:
             logger.info(f"[{PLUGIN_NAME}] 已加载 {route_count} 个启用的模型路由")
         self._refresh_model_route_index(log_warnings=True)
 
-        for route in self._get_enabled_model_routes():
+        for route in enabled_routes:
             route_name = str(route.get("route_name", "")).strip()
             if route.get("use_builtin_provider", False):
                 provider_id = str(route.get("provider", "")).strip()
@@ -310,6 +328,10 @@ class GrokSearchPlugin(Star):
                         f"[{PLUGIN_NAME}] 模型路由 '{route_name}' 启用了内置供应商，但未配置 provider"
                     )
                 continue
+
+            if not self._route_has_distinct_connection_config(route):
+                continue
+
             await self._validate_config(
                 self._get_effective_config(route),
                 config_name=f"模型路由 '{route_name}' 的",

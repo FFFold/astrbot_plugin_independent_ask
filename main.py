@@ -43,6 +43,7 @@ except ImportError:
     get_astrbot_data_path = None
 from .tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
+    extract_urls,
     is_safe_url,
     normalize_api_key,
     normalize_base_url,
@@ -751,8 +752,6 @@ class GrokSearchPlugin(Star):
 
     def _extract_sources_from_text(self, text: str) -> list[dict[str, str]]:
         """从文本中提取 URL 作为来源，仅允许 http/https 协议"""
-        from .tool.tool import extract_urls
-
         return [{"url": url, "title": "", "snippet": ""} for url in extract_urls(text)]
 
     def _help_text(self) -> str:
@@ -869,8 +868,6 @@ class GrokSearchPlugin(Star):
             total_tokens = usage.get("total_tokens", 0)
             model = self.config.get("model", "")
             theme = self.config.get("card_theme", "auto")
-
-            import tempfile
 
             tmp_path = None
             try:

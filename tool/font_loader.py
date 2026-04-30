@@ -142,9 +142,13 @@ def find_fonts_in_dir(font_dir: str) -> tuple[str, str] | None:
 def _extract_7z(archive_path: str, output_dir: str) -> None:
     """优先用系统 7z / 7za 解压，回退 py7zr。"""
     for cmd in ("7z", "7za"):
+        # 解析为绝对路径，避免 PATH 注入；找不到则跳过
+        exe = shutil.which(cmd)
+        if not exe:
+            continue
         try:
-            result = subprocess.run(
-                [cmd, "x", archive_path, f"-o{output_dir}", "-y"],
+            result = subprocess.run(  # noqa: S603  # exe 来自 which()，参数为常量
+                [exe, "x", archive_path, f"-o{output_dir}", "-y"],
                 capture_output=True,
                 timeout=120,
             )

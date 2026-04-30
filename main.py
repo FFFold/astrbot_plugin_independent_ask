@@ -483,37 +483,16 @@ class GrokSearchPlugin(Star):
                         f"[{PLUGIN_NAME}] 内置供应商返回非 JSON 格式，使用降级处理"
                     )
 
-                    # 检测典型错误模式，避免将错误文案误判为成功
-                    text_lower = text.lower()
-                    error_patterns = [
-                        "rate limit",
-                        "too many requests",
-                        "quota exceeded",
-                        "authentication failed",
-                        "invalid api key",
-                        "unauthorized",
-                        "service unavailable",
-                        "internal server error",
-                        "timeout",
-                        "connection refused",
-                    ]
-                    is_error_response = any(p in text_lower for p in error_patterns)
-
-                    if not text.strip() or is_error_response:
-                        error_msg = (
-                            "提供商返回空响应"
-                            if not text.strip()
-                            else f"提供商返回错误: {text[:200]}"
-                        )
+                    if not text.strip():
                         return {
                             "ok": False,
-                            "error": error_msg,
+                            "error": "提供商返回空响应",
                             "content": "",
                             "sources": [],
                             "elapsed_ms": int((time.time() - started) * 1000),
                             "retries": attempts,
                             "usage": usage,
-                            "raw": text[:500] if text else "",
+                            "raw": "",
                         }
 
                     sources = self._extract_sources_from_text(text)
@@ -527,6 +506,8 @@ class GrokSearchPlugin(Star):
                         "raw": text,
                     }
 
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     attempts += 1
                     if not use_retry or attempts > max_retries:

@@ -235,16 +235,33 @@ def coerce_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def extract_urls(text: str) -> list[str]:
-    """从文本中提取 URL"""
+def is_safe_url(url: str) -> bool:
+    """校验 URL 是否安全：仅允许 http/https，长度<=2048，无控制字符"""
+    from urllib.parse import urlparse
+
+    if not url or len(url) > 2048:
+        return False
+    if any(ord(c) < 32 for c in url):
+        return False
+    try:
+        return urlparse(url).scheme in ("http", "https")
+    except Exception:
+        return False
+
+
+def extract_urls(text: str, *, safe_only: bool = True) -> list[str]:
+    """从文本中提取 URL（默认仅返回通过 is_safe_url 校验的链接）"""
     urls = re.findall(r"https?://[^\s)\]}>\"']+", text)
     seen: set[str] = set()
     out: list[str] = []
     for url in urls:
         url = url.rstrip(".,;:!?'\"")
-        if url and url not in seen:
-            seen.add(url)
-            out.append(url)
+        if not url or url in seen:
+            continue
+        if safe_only and not is_safe_url(url):
+            continue
+        seen.add(url)
+        out.append(url)
     return out
 
 

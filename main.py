@@ -43,6 +43,7 @@ except ImportError:
     get_astrbot_data_path = None
 from .tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
+    is_safe_url,
     normalize_api_key,
     normalize_base_url,
     parse_json_config,
@@ -732,24 +733,13 @@ class GrokSearchPlugin(Star):
 
     def _normalize_sources(self, raw_sources: list) -> list[dict[str, str]]:
         """归一化 sources 结构，仅允许 http/https 协议"""
-        from urllib.parse import urlparse
-
         sources = []
         if isinstance(raw_sources, list):
             for item in raw_sources:
                 if isinstance(item, dict) and item.get("url"):
                     url = str(item.get("url", ""))
-                    # URL 协议白名单校验
-                    try:
-                        parsed = urlparse(url)
-                        if parsed.scheme not in ("http", "https"):
-                            continue
-                        # 限制长度和过滤控制字符
-                        if len(url) > 2048 or any(ord(c) < 32 for c in url):
-                            continue
-                    except Exception:
+                    if not is_safe_url(url):
                         continue
-
                     sources.append(
                         {
                             "url": url,
@@ -761,30 +751,9 @@ class GrokSearchPlugin(Star):
 
     def _extract_sources_from_text(self, text: str) -> list[dict[str, str]]:
         """从文本中提取 URL 作为来源，仅允许 http/https 协议"""
-        from urllib.parse import urlparse
+        from .tool.tool import extract_urls
 
-        sources = []
-        url_pattern = r"https://[^\s)\]}>\"']+|http://[^\s)\]}>\"']+"
-        seen: set[str] = set()
-
-        for match in re.finditer(url_pattern, text):
-            url = match.group().rstrip(".,;:!?\"'")
-            if not url or url in seen:
-                continue
-            # URL 校验
-            try:
-                parsed = urlparse(url)
-                if parsed.scheme not in ("http", "https"):
-                    continue
-                if len(url) > 2048 or any(ord(c) < 32 for c in url):
-                    continue
-            except Exception:
-                continue
-
-            seen.add(url)
-            sources.append({"url": url, "title": "", "snippet": ""})
-
-        return sources
+        return [{"url": url, "title": "", "snippet": ""} for url in extract_urls(text)]
 
     def _help_text(self) -> str:
         """返回帮助文本"""

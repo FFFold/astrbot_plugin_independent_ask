@@ -2,6 +2,23 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.4.0] - 2026-05-01
+
+### Added
+- **代理支持（字体下载）**：`font_loader` 新增 `set_proxy()` / `_urlopen()` 包装，字体初始化时自动从插件 `proxy` 配置注入代理，在受限网络环境下也能正常下载 Sarasa Gothic 字体
+- **`tool/__init__.py` 公开导出**：re-export `tool.tool` 中的 22 个常用符号，`skill/scripts/grok_search.py` 可直接 `from tool import ...` 而无需 ImportError
+
+### Changed
+- **代码重构（18 项优化）**：将大量重复逻辑提取为独立辅助函数（`build_user_content`、`safe_number`、`resolve_system_prompt`、`is_safe_url` 等），减少代码重复；`_do_search` 拆分为内置供应商与 HTTP 两个分支
+- **`font_loader` 独立模块**：从 `card_render.py` 提取为 `tool/font_loader.py`，自动发现最新版本、多线程分段下载、自动解压；所有 `urlopen` 调用均通过 context manager 管理，避免连接泄漏
+- **CI 工作流**：切换为代码质量检查工作流（Lint/Syntax/Metadata），修复 isort/UP037 问题
+- **依赖声明**：将运行时依赖从 `metadata.yaml` 迁移到 `requirements.txt`，去除 aiohttp/Pillow 重复声明
+- **`terminate()` 行为修正**：不再对 `asyncio.to_thread` 包装的字体初始化任务调用 `cancel()`（无法终止底层线程），改为 detach 让其自行结束
+
+### Fixed
+- **冗余 `isinstance` 检查**：`grok_chat.py` 和 `grok_responses.py` 中对 `IMAGE_UNSUPPORTED_ERROR` 的 `isinstance(x, dict) and x is ...` 改为单纯 `is` 同一性比较
+- **`subprocess` 安全告警**：`_extract_7z` 改用 `shutil.which()` 解析 7z/7za 绝对路径，消除 PATH 注入风险
+
 ## [1.3.1] - 2026-04-12
 
 ### Fix

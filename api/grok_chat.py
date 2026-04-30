@@ -12,6 +12,7 @@ import aiohttp
 
 from ..tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
+    DEFAULT_MODEL,
     FETCH_SYSTEM_PROMPT,
     IMAGE_UNSUPPORTED_ERROR,
     build_headers,
@@ -31,7 +32,7 @@ async def grok_search(
     query: str,
     base_url: str,
     api_key: str,
-    model: str = "grok-4-fast",
+    model: str = DEFAULT_MODEL,
     timeout: float = 60.0,
     enable_thinking: bool = True,
     thinking_budget: int = 32000,
@@ -297,7 +298,7 @@ async def grok_fetch(
     url: str,
     base_url: str,
     api_key: str,
-    model: str = "grok-4-fast",
+    model: str = DEFAULT_MODEL,
     timeout: float = 60.0,
     extra_body: dict | None = None,
     extra_headers: dict | None = None,

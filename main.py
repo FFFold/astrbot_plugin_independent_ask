@@ -43,6 +43,7 @@ except ImportError:
     get_astrbot_data_path = None
 from .tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
+    DEFAULT_MODEL,
     extract_urls,
     is_safe_url,
     normalize_api_key,
@@ -553,7 +554,7 @@ class GrokSearchPlugin(Star):
                     query=query,
                     base_url=self.config.get("base_url", ""),
                     api_key=self.config.get("api_key", ""),
-                    model=self.config.get("model", "grok-4-fast"),
+                    model=self.config.get("model", DEFAULT_MODEL),
                     timeout=timeout,
                     extra_body=self._parse_json_config("extra_body"),
                     extra_headers=self._parse_json_config("extra_headers"),
@@ -571,7 +572,7 @@ class GrokSearchPlugin(Star):
                     query=query,
                     base_url=self.config.get("base_url", ""),
                     api_key=self.config.get("api_key", ""),
-                    model=self.config.get("model", "grok-4-fast"),
+                    model=self.config.get("model", DEFAULT_MODEL),
                     timeout=timeout,
                     enable_thinking=self.config.get("enable_thinking", True),
                     thinking_budget=thinking_budget,
@@ -766,7 +767,7 @@ class GrokSearchPlugin(Star):
         model = (
             "由供应商决定"
             if use_builtin
-            else (self.config.get("model", "grok-4-fast") or "默认")
+            else (self.config.get("model", DEFAULT_MODEL) or "默认")
         )
         has_custom_prompt = bool(
             (self.config.get("custom_system_prompt", "") or "").strip()
@@ -1000,7 +1001,7 @@ class GrokSearchPlugin(Star):
 
         base_url = self.config.get("base_url", "")
         api_key = self.config.get("api_key", "")
-        model = self.config.get("model", "grok-4-fast")
+        model = self.config.get("model", DEFAULT_MODEL)
         timeout = self.config.get("timeout_seconds", 60)
         proxy = self.config.get("proxy", "") or None
 

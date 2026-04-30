@@ -35,7 +35,7 @@
 |--------|------|------|------|
 | `use_builtin_provider` | bool | 否 | 是否使用 AstrBot 自带供应商（默认: false） |
 | `provider` | string | 条件 | 选择已配置的 LLM 供应商（启用自带供应商时必填） |
-| `model` | string | 否 | 模型名称（默认: grok-4-fast，启用自带供应商时使用供应商默认模型） |
+| `model` | string | 否 | 模型名称（默认: grok-4.1-fast，启用自带供应商时使用供应商默认模型） |
 
 ### 连接设置
 

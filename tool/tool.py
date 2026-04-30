@@ -68,6 +68,9 @@ HTTP_ERROR_HINTS: dict[int, str] = {
 # 默认可重试的 HTTP 状态码
 DEFAULT_RETRYABLE_STATUS_CODES: set[int] = {429, 500, 502, 503, 504}
 
+# 默认模型名（与 _conf_schema.json 保持一致）
+DEFAULT_MODEL = "grok-4.1-fast"
+
 
 # ─── 工具函数 ─────────────────────────────────────────────
 

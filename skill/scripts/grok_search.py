@@ -16,6 +16,7 @@ if _PLUGIN_DIR not in sys.path:
     sys.path.insert(0, _PLUGIN_DIR)
 
 from tool import (  # noqa: E402
+    DEFAULT_MODEL,
     FETCH_SYSTEM_PROMPT,
     coerce_json_object as _coerce_json_object,
     extract_urls as _extract_urls,
@@ -526,7 +527,7 @@ def main() -> int:
         args.model.strip()
         or os.environ.get("GROK_MODEL", "").strip()
         or str(config.get("model") or "").strip()
-        or "grok-4-fast"
+        or DEFAULT_MODEL
     )
 
     timeout_seconds = args.timeout_seconds

@@ -515,6 +515,7 @@ def format_http_error(
         started,
         raw=error_text[:2000] if error_text else "",
     )
+    result["status"] = status
     # 429 时解析 Retry-After 头
     if status == 429 and resp_headers is not None:
         retry_after = parse_retry_after(resp_headers)
@@ -603,11 +604,15 @@ async def retry_request(
             if result.get("ok"):
                 break
 
-            # 检查是否为可重试的错误
-            error_msg = result.get("error", "")
-            should_retry = any(
-                f"HTTP {code}" in error_msg for code in retryable_status_codes
-            )
+            # 检查是否为可重试的错误：优先看 status 字段，其次回退到字符串包含
+            status = result.get("status")
+            if isinstance(status, int):
+                should_retry = status in retryable_status_codes
+            else:
+                error_msg = result.get("error", "")
+                should_retry = any(
+                    f"HTTP {code}" in error_msg for code in retryable_status_codes
+                )
 
             if should_retry and attempt < max_retries:
                 retry_count = attempt + 1

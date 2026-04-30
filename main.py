@@ -429,7 +429,6 @@ class GrokSearchPlugin(Star):
         # 如果启用了使用 AstrBot 自带供应商，通过 AstrBot provider 接口调用
         if self.config.get("use_builtin_provider", False):
             attempts = 0
-            last_exc = None
             started = time.time()
             while True:
                 try:
@@ -536,10 +535,9 @@ class GrokSearchPlugin(Star):
                     }
 
                 except Exception as e:
-                    last_exc = e
                     attempts += 1
                     if not use_retry or attempts > max_retries:
-                        return {"ok": False, "error": str(last_exc)}
+                        return {"ok": False, "error": str(e)}
                     await asyncio.sleep(retry_delay * attempts)
 
         # 否则使用 HTTP 客户端向外部 Grok API 发起请求

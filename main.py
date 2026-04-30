@@ -49,6 +49,8 @@ from .tool.tool import (
     normalize_sources,
     parse_json_config,
     parse_json_object,
+    resolve_system_prompt,
+    safe_number,
 )
 from .tool.card_render import (
     render_search_card,
@@ -380,24 +382,20 @@ class GrokSearchPlugin(Star):
             images: Optional list of base64-encoded images for multimodal queries
         """
         # 安全解析 timeout 配置
-        try:
-            timeout_val = self.config.get("timeout_seconds", 60)
-            timeout = float(timeout_val) if timeout_val is not None else 60.0
-            if timeout <= 0:
-                timeout = 60.0
-        except (ValueError, TypeError):
-            timeout = 60.0
+        timeout = safe_number(
+            self.config.get("timeout_seconds", 60),
+            60.0,
+            cast=float,
+            min_val=0.001,
+        )
 
         # 安全解析 thinking_budget 配置
-        try:
-            thinking_budget_val = self.config.get("thinking_budget", 32000)
-            thinking_budget = (
-                int(thinking_budget_val) if thinking_budget_val is not None else 32000
-            )
-            if thinking_budget < 0:
-                thinking_budget = 32000
-        except (ValueError, TypeError):
-            thinking_budget = 32000
+        thinking_budget = safe_number(
+            self.config.get("thinking_budget", 32000),
+            32000,
+            cast=int,
+            min_val=0,
+        )
 
         # 重试配置（仅指令调用时使用）
         max_retries = 0
@@ -412,15 +410,12 @@ class GrokSearchPlugin(Star):
             if retryable_codes and isinstance(retryable_codes, list):
                 retryable_status_codes = set(retryable_codes)
 
-        # 自定义系统提示词
-        custom_prompt = self.config.get("custom_system_prompt", "")
-        if custom_prompt and isinstance(custom_prompt, str) and custom_prompt.strip():
-            # 如果有自定义提示词且没有传入其他提示词，使用配置中的自定义提示词
-            if system_prompt is None:
-                system_prompt = custom_prompt.strip()
-        # 如果仍然没有系统提示词，使用默认的 JSON 系统提示词
+        # 自定义系统提示词（传入优先，其次配置，最后默认 JSON 提示词）
         if system_prompt is None:
-            system_prompt = DEFAULT_JSON_SYSTEM_PROMPT
+            system_prompt = resolve_system_prompt(
+                self.config.get("custom_system_prompt", ""),
+                DEFAULT_JSON_SYSTEM_PROMPT,
+            )
         # 如果启用了使用 AstrBot 自带供应商，通过 AstrBot provider 接口调用
         if self.config.get("use_builtin_provider", False):
             attempts = 0
@@ -753,18 +748,17 @@ class GrokSearchPlugin(Star):
             query = "请搜索这张图片的内容"
 
         # 优先使用自定义提示词，未设置则使用内置提示词（英文指令 + JSON 格式 + 中文回复）
-        custom_prompt = self.config.get("custom_system_prompt", "")
-        if custom_prompt and isinstance(custom_prompt, str) and custom_prompt.strip():
-            cmd_system_prompt = custom_prompt.strip()
-        else:
-            cmd_system_prompt = (
+        cmd_system_prompt = resolve_system_prompt(
+            self.config.get("custom_system_prompt", ""),
+            (
                 "You are a web research assistant. Use live web search/browsing when answering. "
                 "Return ONLY a single JSON object with keys: "
                 "content (string), sources (array of objects with url/title/snippet when possible). "
                 "Keep content concise and evidence-backed. "
                 "IMPORTANT: Respond in Chinese. Do NOT use Markdown formatting in the content field - use plain text only. "
                 "Keep proper nouns and names in their original language."
-            )
+            ),
+        )
 
         result = await self._do_search(
             query,

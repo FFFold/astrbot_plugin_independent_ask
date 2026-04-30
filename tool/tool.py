@@ -188,6 +188,32 @@ def normalize_image(b64_data: str) -> tuple[str, str] | None:
     return None  # 无法识别 → 拒绝
 
 
+def safe_number(
+    value: Any,
+    default: float | int,
+    *,
+    cast: type = float,
+    min_val: float | int | None = None,
+) -> Any:
+    """安全地把配置值转成数值；失败、None、低于下限时回退到 default。"""
+    try:
+        v = cast(value) if value is not None else default
+    except (ValueError, TypeError):
+        return default
+    if min_val is not None and v < min_val:
+        return default
+    return v
+
+
+def resolve_system_prompt(custom_prompt: Any, default_prompt: str) -> str:
+    """选择系统提示词：自定义优先（去掉空白），否则使用默认。"""
+    if isinstance(custom_prompt, str):
+        stripped = custom_prompt.strip()
+        if stripped:
+            return stripped
+    return default_prompt
+
+
 def normalize_api_key(api_key: str) -> str:
     """过滤占位符 API Key"""
     api_key = api_key.strip()

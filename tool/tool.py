@@ -188,6 +188,55 @@ def normalize_image(b64_data: str) -> tuple[str, str] | None:
     return None  # 无法识别 → 拒绝
 
 
+def build_user_content(
+    text: str,
+    images: list[str] | None,
+    *,
+    kind: str,
+) -> Any:
+    """构建用户消息体，自动处理多模态。
+
+    - 无图片：返回纯文本字符串。
+    - 有图片：返回内容数组；遇到无法识别的图片格式时返回 IMAGE_UNSUPPORTED_ERROR。
+
+    kind:
+        - "chat":      OpenAI Chat Completions 多模态格式（type=text/image_url）
+        - "responses": xAI Responses API 多模态格式（type=input_text/input_image）
+    """
+    if not images:
+        return text
+
+    if kind == "chat":
+        text_part: dict[str, Any] = {"type": "text", "text": text}
+    elif kind == "responses":
+        text_part = {"type": "input_text", "text": text}
+    else:
+        raise ValueError(f"Unknown content kind: {kind!r}")
+
+    parts: list[dict[str, Any]] = [text_part]
+    for img_b64 in images:
+        normalized = normalize_image(img_b64)
+        if normalized is None:
+            return IMAGE_UNSUPPORTED_ERROR
+        mime, img_b64 = normalized
+        if kind == "chat":
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{img_b64}"},
+                }
+            )
+        else:
+            parts.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{mime};base64,{img_b64}",
+                    "detail": "high",
+                }
+            )
+    return parts
+
+
 def safe_number(
     value: Any,
     default: float | int,

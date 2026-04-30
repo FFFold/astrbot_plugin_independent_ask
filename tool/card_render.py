@@ -144,11 +144,11 @@ def _extract_7z(archive_path: str, output_dir: str, _log: logging.Logger) -> Non
     _log.info("系统未安装 7z，尝试使用 py7zr 解压 ...")
     try:
         import py7zr
-    except ImportError:
-        from pip._internal.cli.main import main as pip_main
-
-        pip_main(["install", "py7zr", "-q"])
-        import py7zr
+    except ImportError as e:
+        raise RuntimeError(
+            "解压字体压缩包需要系统 7z 工具或 py7zr Python 包，"
+            "请安装之后重试：pip install py7zr"
+        ) from e
 
     with py7zr.SevenZipFile(archive_path, "r") as z:
         z.extractall(path=output_dir)

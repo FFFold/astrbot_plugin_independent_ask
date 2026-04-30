@@ -6,3 +6,7 @@ author: piexian
 repo: https://github.com/piexian/astrbot_plugin_grok_web_search
 astrbot_version: ">=4.9.2"
 support_platforms: []
+requirements:
+  - aiohttp
+  - Pillow
+  - py7zr

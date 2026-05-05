@@ -39,6 +39,72 @@ from tool import (  # noqa: E402
     normalize_image as _normalize_image,
 )
 
+# ─── 新版分组配置读取（与 main.py CONFIG_PATHS 保持一致）──────────────────
+_CONFIG_PATHS = {
+    "use_builtin_provider": ("provider_settings", "use_builtin_provider"),
+    "provider": ("provider_settings", "provider"),
+    "model": ("provider_settings", "model"),
+    "use_responses_api": ("provider_settings", "use_responses_api"),
+    "base_url": ("connection_settings", "base_url"),
+    "api_key": ("connection_settings", "api_key"),
+    "timeout_seconds": ("connection_settings", "timeout_seconds"),
+    "reuse_session": ("connection_settings", "reuse_session"),
+    "proxy": ("connection_settings", "proxy"),
+    "enable_thinking": ("request_settings", "enable_thinking"),
+    "thinking_budget": ("request_settings", "thinking_budget"),
+    "max_retries": ("request_settings", "max_retries"),
+    "retry_delay": ("request_settings", "retry_delay"),
+    "retryable_status_codes": ("request_settings", "retryable_status_codes"),
+    "custom_system_prompt": ("request_settings", "custom_system_prompt"),
+    "extra_body": ("advanced_settings", "extra_body"),
+    "extra_headers": ("advanced_settings", "extra_headers"),
+    "show_sources": ("output_settings", "show_sources"),
+    "render_as_image": ("output_settings", "render_as_image"),
+    "send_as_forward": ("output_settings", "send_as_forward"),
+    "card_theme": ("output_settings", "card_theme"),
+    "max_sources": ("output_settings", "max_sources"),
+    "enable_fetch": ("tool_settings", "enable_fetch"),
+    "enable_skill": ("tool_settings", "enable_skill"),
+}
+
+_CONFIG_DEFAULTS = {
+    "use_builtin_provider": False,
+    "provider": "",
+    "model": DEFAULT_MODEL,
+    "use_responses_api": False,
+    "base_url": "",
+    "api_key": "",
+    "timeout_seconds": 60,
+    "reuse_session": False,
+    "proxy": "",
+    "enable_thinking": True,
+    "thinking_budget": 32000,
+    "max_retries": 3,
+    "retry_delay": 1.0,
+    "retryable_status_codes": [429, 500, 502, 503, 504],
+    "custom_system_prompt": "",
+    "extra_body": "",
+    "extra_headers": "",
+    "show_sources": False,
+    "render_as_image": False,
+    "send_as_forward": False,
+    "card_theme": "auto",
+    "max_sources": 5,
+    "enable_fetch": False,
+    "enable_skill": False,
+}
+
+
+def _cfg(config: dict[str, Any], key: str):
+    """优先从分组配置读取，fallback 到平铺键和默认值"""
+    path = _CONFIG_PATHS.get(key)
+    if path:
+        section = config.get(path[0])
+        if isinstance(section, dict) and path[1] in section:
+            return section[path[1]]
+    default = _CONFIG_DEFAULTS.get(key)
+    return config.get(key, default)
+
 
 def _compact_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
@@ -483,7 +549,9 @@ def main() -> int:
 
     # 优先尝试加载 AstrBot 插件配置
     astrbot_config, astrbot_config_status = _load_astrbot_plugin_config()
-    if astrbot_config and _normalize_api_key(str(astrbot_config.get("api_key") or "")):
+    if astrbot_config and _normalize_api_key(
+        str(_cfg(astrbot_config, "api_key") or "")
+    ):
         config_path = "[AstrBot Plugin Config]"
         config = astrbot_config
 
@@ -511,7 +579,7 @@ def main() -> int:
                 fallback_config = candidate_config
 
             candidate_key = _normalize_api_key(
-                str(candidate_config.get("api_key") or "")
+                str(_cfg(candidate_config, "api_key") or "")
             )
             if candidate_key:
                 config_path = candidate
@@ -528,17 +596,17 @@ def main() -> int:
     base_url = _normalize_base_url_value(
         args.base_url.strip()
         or os.environ.get("GROK_BASE_URL", "").strip()
-        or str(config.get("base_url") or "").strip()
+        or str(_cfg(config, "base_url") or "").strip()
     )
     api_key = _normalize_api_key(
         args.api_key.strip()
         or os.environ.get("GROK_API_KEY", "").strip()
-        or str(config.get("api_key") or "").strip()
+        or str(_cfg(config, "api_key") or "").strip()
     )
     model = (
         args.model.strip()
         or os.environ.get("GROK_MODEL", "").strip()
-        or str(config.get("model") or "").strip()
+        or str(_cfg(config, "model") or "").strip()
         or DEFAULT_MODEL
     )
 
@@ -550,7 +618,7 @@ def main() -> int:
             timeout_seconds = 0.0
     if not timeout_seconds:
         try:
-            timeout_seconds = float(config.get("timeout_seconds") or 0)
+            timeout_seconds = float(_cfg(config, "timeout_seconds") or 0)
         except (ValueError, TypeError):
             timeout_seconds = 0.0
     if not timeout_seconds or timeout_seconds <= 0:
@@ -567,7 +635,7 @@ def main() -> int:
         enable_thinking = False
     else:
         # 从配置文件读取，默认 True
-        cfg_enable_thinking = config.get("enable_thinking")
+        cfg_enable_thinking = _cfg(config, "enable_thinking")
         enable_thinking = (
             cfg_enable_thinking if isinstance(cfg_enable_thinking, bool) else True
         )
@@ -580,7 +648,7 @@ def main() -> int:
             thinking_budget = 0
     if not thinking_budget:
         try:
-            thinking_budget = int(config.get("thinking_budget") or 0)
+            thinking_budget = int(_cfg(config, "thinking_budget") or 0)
         except (ValueError, TypeError):
             thinking_budget = 0
     if not thinking_budget or thinking_budget <= 0:
@@ -588,7 +656,7 @@ def main() -> int:
 
     # 解析 Responses API 开关
     use_responses_api = False
-    cfg_use_responses = config.get("use_responses_api")
+    cfg_use_responses = _cfg(config, "use_responses_api")
     if isinstance(cfg_use_responses, bool):
         use_responses_api = cfg_use_responses
 
@@ -612,7 +680,7 @@ def main() -> int:
 
     try:
         extra_body: dict[str, Any] = {}
-        cfg_extra_body = config.get("extra_body")
+        cfg_extra_body = _cfg(config, "extra_body")
         if isinstance(cfg_extra_body, dict):
             extra_body.update(cfg_extra_body)
         extra_body.update(_load_json_env("GROK_EXTRA_BODY_JSON"))
@@ -621,7 +689,7 @@ def main() -> int:
         )
 
         extra_headers: dict[str, Any] = {}
-        cfg_extra_headers = config.get("extra_headers")
+        cfg_extra_headers = _cfg(config, "extra_headers")
         if isinstance(cfg_extra_headers, dict):
             extra_headers.update(cfg_extra_headers)
         extra_headers.update(_load_json_env("GROK_EXTRA_HEADERS_JSON"))

@@ -1,164 +1,348 @@
 {
+  "provider_settings": {
+    "type": "object",
+    "description": "供应商设置",
+    "hint": "选择使用 AstrBot 自带供应商或自定义 Grok API",
+    "items": {
+      "use_builtin_provider": {
+        "type": "bool",
+        "description": "是否使用 AstrBot 自带供应商",
+        "hint": "启用后将使用已配置的 LLM 供应商，无需配置模型参数",
+        "default": false
+      },
+      "provider": {
+        "_special": "select_provider",
+        "type": "string",
+        "description": "选择要使用的 LLM 供应商",
+        "hint": "仅当启用自带供应商时生效，选择已配置的 LLM 供应商",
+        "default": ""
+      },
+      "model": {
+        "type": "string",
+        "description": "模型名称",
+        "hint": "选择要使用的 Grok 模型",
+        "default": "grok-4.1-fast"
+      },
+      "use_responses_api": {
+        "type": "bool",
+        "description": "使用 /v1/responses 接口",
+        "hint": "仅适用于 xAI 官方 API，非官方/第三方服务对此接口支持不完善，可能导致请求失败",
+        "default": false
+      }
+    }
+  },
+  "connection_settings": {
+    "type": "object",
+    "description": "连接设置",
+    "hint": "自定义供应商的连接参数",
+    "items": {
+      "base_url": {
+        "type": "string",
+        "description": "Grok API 端点 URL",
+        "hint": "使用自定义供应商时必填，例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
+      },
+      "api_key": {
+        "type": "string",
+        "description": "Grok API 密钥",
+        "hint": "使用自定义供应商时必填，你的 API Key"
+      },
+      "timeout_seconds": {
+        "type": "int",
+        "description": "请求超时时间（秒）",
+        "hint": "控制每次请求的最大等待时间",
+        "default": 60
+      },
+      "reuse_session": {
+        "type": "bool",
+        "description": "是否复用 HTTP 会话",
+        "hint": "高频调用场景可开启以减少连接开销",
+        "default": false
+      },
+      "proxy": {
+        "type": "string",
+        "description": "HTTP 代理地址",
+        "hint": "例如: http://127.0.0.1:7890，留空则不使用代理",
+        "default": ""
+      }
+    }
+  },
+  "request_settings": {
+    "type": "object",
+    "description": "请求设置",
+    "hint": "控制模型请求、重试和提示词",
+    "items": {
+      "enable_thinking": {
+        "type": "bool",
+        "description": "是否开启思考模式",
+        "hint": "允许模型在回答前进行多轮思考",
+        "default": true
+      },
+      "thinking_budget": {
+        "type": "int",
+        "description": "思考 token 预算",
+        "hint": "控制思考阶段可使用的最大 token 数量",
+        "default": 32000
+      },
+      "max_retries": {
+        "type": "int",
+        "description": "最大重试次数",
+        "hint": "请求失败时的最大重试次数",
+        "default": 3,
+        "slider": {
+          "min": 0,
+          "max": 10,
+          "step": 1
+        }
+      },
+      "retry_delay": {
+        "type": "float",
+        "description": "重试间隔时间（秒）",
+        "hint": "基础重试间隔（线性退避），429 错误时优先使用服务端 Retry-After 头",
+        "default": 1.0,
+        "slider": {
+          "min": 0.1,
+          "max": 5,
+          "step": 0.1
+        }
+      },
+      "retryable_status_codes": {
+        "type": "list",
+        "description": "可重试的 HTTP 状态码",
+        "hint": "自定义重试的 HTTP 状态码列表",
+        "default": [
+          429,
+          500,
+          502,
+          503,
+          504
+        ]
+      },
+      "custom_system_prompt": {
+        "type": "text",
+        "description": "自定义系统提示词",
+        "hint": "留空使用默认提示词",
+        "default": "",
+        "editor_mode": true,
+        "editor_language": "markdown",
+        "editor_theme": "vs-dark"
+      }
+    }
+  },
+  "output_settings": {
+    "type": "object",
+    "description": "输出设置",
+    "hint": "控制搜索结果展示方式",
+    "items": {
+      "show_sources": {
+        "type": "bool",
+        "description": "是否在结果中显示来源 URL",
+        "hint": "启用后将在搜索结果中显示来源链接",
+        "default": false
+      },
+      "render_as_image": {
+        "type": "bool",
+        "description": "是否将搜索结果渲染为图片卡片",
+        "hint": "启用后 /grok 指令的结果将以精美图片卡片形式发送，来源链接单独以文本发送",
+        "default": false
+      },
+      "send_as_forward": {
+        "type": "bool",
+        "description": "是否将 /grok 结果以合并转发发送",
+        "hint": "启用过后合并转发消息",
+        "default": false
+      },
+      "card_theme": {
+        "type": "string",
+        "description": "卡片主题",
+        "hint": "auto: 根据系统时间自动切换日/夜模式；dark: 深色；light: 浅色",
+        "default": "auto",
+        "options": [
+          "auto",
+          "dark",
+          "light"
+        ]
+      },
+      "max_sources": {
+        "type": "int",
+        "description": "最大返回来源数量",
+        "hint": "控制返回的来源链接数量，0 表示不限制",
+        "default": 5
+      }
+    }
+  },
+  "tool_settings": {
+    "type": "object",
+    "description": "工具设置",
+    "hint": "控制 LLM Tool 与 Skill 安装",
+    "items": {
+      "enable_fetch": {
+        "type": "bool",
+        "description": "是否启用网页抓取工具",
+        "hint": "启用后 AI 可调用 grok_web_fetch 抓取网页内容",
+        "default": false
+      },
+      "enable_skill": {
+        "type": "bool",
+        "description": "是否安装 Skill 到 skills 目录",
+        "hint": "启用后将安装 Skill 以供 AstrBot 使用，同时禁用 LLM Tool",
+        "default": false
+      }
+    }
+  },
+  "advanced_settings": {
+    "type": "object",
+    "description": "扩展参数",
+    "hint": "向 API 请求追加自定义 JSON 参数和请求头",
+    "items": {
+      "extra_body": {
+        "type": "text",
+        "description": "额外请求体参数（JSON 格式）",
+        "hint": "追加到 API 请求体的 JSON 参数，例如: {\"temperature\": 0.5, \"max_tokens\": 4096}",
+        "default": "",
+        "editor_mode": true,
+        "editor_language": "json",
+        "editor_theme": "vs-dark"
+      },
+      "extra_headers": {
+        "type": "text",
+        "description": "额外请求头（JSON 格式）",
+        "hint": "追加到 HTTP 请求头的 JSON 参数，例如: {\"X-Custom-Header\": \"value\"}",
+        "default": "",
+        "editor_mode": true,
+        "editor_language": "json",
+        "editor_theme": "vs-dark"
+      }
+    }
+  },
   "use_builtin_provider": {
     "type": "bool",
-    "description": "是否使用 AstrBot 自带供应商",
-    "hint": "启用后将使用已配置的 LLM 供应商,无需配置模型参数",
-    "default": false
+    "default": false,
+    "invisible": true
   },
   "provider": {
-    "_special": "select_provider",
     "type": "string",
-    "description": "选择要使用的 LLM 供应商",
-    "hint": "仅当启用自带供应商时生效,选择已配置的 LLM 供应商",
-    "default": ""
+    "default": "",
+    "invisible": true
   },
   "model": {
     "type": "string",
-    "description": "模型名称",
-    "hint": "选择要使用的 Grok 模型",
-    "default": "grok-4.1-fast"
+    "default": "grok-4.1-fast",
+    "invisible": true
   },
   "use_responses_api": {
     "type": "bool",
-    "description": "使用 /v1/responses 接口",
-    "hint": "⚠️ 仅适用于 xAI 官方 API，非官方/第三方服务对此接口支持不完善，可能导致请求失败",
-    "default": false
+    "default": false,
+    "invisible": true
   },
   "base_url": {
     "type": "string",
-    "description": "Grok API 端点 URL",
-    "hint": "使用自定义供应商时必填,例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
+    "default": "",
+    "invisible": true
   },
   "api_key": {
     "type": "string",
-    "description": "Grok API 密钥",
-    "hint": "使用自定义供应商时必填,你的 API Key"
+    "default": "",
+    "invisible": true
   },
   "timeout_seconds": {
     "type": "int",
-    "description": "请求超时时间（秒）",
-    "hint": "控制每次请求的最大等待时间",
-    "default": 60
+    "default": 60,
+    "invisible": true
   },
   "reuse_session": {
     "type": "bool",
-    "description": "是否复用 HTTP 会话",
-    "hint": "高频调用场景可开启以减少连接开销",
-    "default": false
+    "default": false,
+    "invisible": true
+  },
+  "proxy": {
+    "type": "string",
+    "default": "",
+    "invisible": true
   },
   "enable_thinking": {
     "type": "bool",
-    "description": "是否开启思考模式",
-    "hint": "允许模型在回答前进行多轮思考",
-    "default": true
+    "default": true,
+    "invisible": true
   },
   "thinking_budget": {
     "type": "int",
-    "description": "思考 token 预算",
-    "hint": "控制思考阶段可使用的最大 token 数量",
-    "default": 32000
+    "default": 32000,
+    "invisible": true
   },
   "max_retries": {
     "type": "int",
-    "description": "最大重试次数",
-    "hint": "请求失败时的最大重试次数",
     "default": 3,
-    "slider": {
-      "min": 0,
-      "max": 10,
-      "step": 1
-    }
+    "invisible": true
   },
   "retry_delay": {
     "type": "float",
-    "description": "重试间隔时间（秒）",
-    "hint": "基础重试间隔（线性退避），429 错误时优先使用服务端 Retry-After 头",
     "default": 1.0,
-    "slider": {
-      "min": 0.1,
-      "max": 5,
-      "step": 0.1
-    }
+    "invisible": true
   },
   "retryable_status_codes": {
     "type": "list",
-    "description": "可重试的 HTTP 状态码",
-    "hint": "自定义重试的 HTTP 状态码列表",
     "default": [
       429,
       500,
       502,
       503,
       504
-    ]
-  },
-  "show_sources": {
-    "type": "bool",
-    "description": "是否在结果中显示来源 URL",
-    "hint": "启用后将在搜索结果中显示来源链接",
-    "default": false
-  },
-  "render_as_image": {
-    "type": "bool",
-    "description": "是否将搜索结果渲染为图片卡片",
-    "hint": "启用后 /grok 指令的结果将以精美图片卡片形式发送，来源链接单独以文本发送",
-    "default": false
-  },
-  "card_theme": {
-    "type": "string",
-    "description": "卡片主题",
-    "hint": "auto: 根据系统时间自动切换日/夜模式；dark: 深色；light: 浅色",
-    "default": "auto"
-  },
-  "max_sources": {
-    "type": "int",
-    "description": "最大返回来源数量",
-    "hint": "控制返回的来源链接数量.0 表示不限制",
-    "default": 5
+    ],
+    "invisible": true
   },
   "custom_system_prompt": {
     "type": "text",
-    "description": "自定义系统提示词",
-    "hint": "留空使用默认提示词",
     "default": "",
-    "editor_mode": true,
-    "editor_language": "markdown",
-    "editor_theme": "vs-dark"
-  },
-  "enable_fetch": {
-    "type": "bool",
-    "description": "是否启用网页抓取工具",
-    "hint": "启用后 AI 可调用 grok_web_fetch 抓取网页内容",
-    "default": false
-  },
-  "enable_skill": {
-    "type": "bool",
-    "description": "是否安装 Skill 到 skills 目录",
-    "hint": "启用后将安装 Skill 以供 AstrBot 使用，同时禁用 LLM Tool",
-    "default": false
+    "invisible": true
   },
   "extra_body": {
     "type": "text",
-    "description": "额外请求体参数（JSON 格式）",
-    "hint": "追加到 API 请求体的 JSON 参数，例如: {\"temperature\": 0.5, \"max_tokens\": 4096}",
     "default": "",
-    "editor_mode": true,
-    "editor_language": "json",
-    "editor_theme": "vs-dark"
+    "invisible": true
   },
   "extra_headers": {
     "type": "text",
-    "description": "额外请求头（JSON 格式）",
-    "hint": "追加到 HTTP 请求头的 JSON 参数，例如: {\"X-Custom-Header\": \"value\"}",
     "default": "",
-    "editor_mode": true,
-    "editor_language": "json",
-    "editor_theme": "vs-dark"
+    "invisible": true
   },
-  "proxy": {
+  "show_sources": {
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
+  "render_as_image": {
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
+  "send_as_forward": {
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
+  "card_theme": {
     "type": "string",
-    "description": "HTTP 代理地址",
-    "hint": "例如: http://127.0.0.1:7890，留空则不使用代理",
-    "default": ""
+    "default": "auto",
+    "options": [
+      "auto",
+      "dark",
+      "light"
+    ],
+    "invisible": true
+  },
+  "max_sources": {
+    "type": "int",
+    "default": 5,
+    "invisible": true
+  },
+  "enable_fetch": {
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
+  "enable_skill": {
+    "type": "bool",
+    "default": false,
+    "invisible": true
   }
 }

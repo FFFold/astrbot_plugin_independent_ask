@@ -2,6 +2,18 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.4.1] - 2026-05-05
+
+### Added
+- **合并转发**：`send_as_forward` 配置项，OneBot v11/aiocqhttp 平台下 `/grok` 结果以合并转发发送，其他平台自动降级
+- **配置迁移**：`_migrate_legacy_config()` 自动将旧版平铺配置迁移到新版分组结构
+
+### Changed
+- **配置 Schema 重构**：平铺式配置重组为分组结构（`provider_settings` / `connection_settings` / `request_settings` / `output_settings` / `tool_settings` / `advanced_settings`），旧版平铺键保留 `invisible` 以兼容
+- **配置读取统一**：`_cfg()` 方法按 `CONFIG_PATHS` 映射分层读取配置，带默认值回退
+- **图片 Base64 转换重构**：`_append_image_base64()` 统一处理 Image 组件、base64://、data:image/、http(s)://、本地路径五种来源
+- **引用消息解析增强**：优先使用 astrbot 新版 `quoted_message_parser`，失败时回退 `chain_parser`
+
 ## [1.4.0] - 2026-05-01
 
 ### Added

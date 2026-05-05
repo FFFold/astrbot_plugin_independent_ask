@@ -36,6 +36,7 @@
 | `use_builtin_provider` | bool | 否 | 是否使用 AstrBot 自带供应商（默认: false） |
 | `provider` | string | 条件 | 选择已配置的 LLM 供应商（启用自带供应商时必填） |
 | `model` | string | 否 | 模型名称（默认: grok-4.1-fast，启用自带供应商时使用供应商默认模型） |
+| `use_responses_api` | bool | 否 | 使用 xAI Responses API（仅官方 API 支持，非官方端点兼容性不佳） |
 
 ### 连接设置
 
@@ -45,8 +46,9 @@
 | `api_key` | string | 条件 | API 密钥（使用自定义供应商时必填） |
 | `timeout_seconds` | int | 否 | 超时时间（默认: 60 秒） |
 | `reuse_session` | bool | 否 | 是否复用 HTTP 会话（高频调用场景可开启，默认: false） |
+| `proxy` | string | 否 | HTTP 代理地址（例如: http://127.0.0.1:7890） |
 
-### 行为设置
+### 请求设置
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
@@ -55,6 +57,7 @@
 | `max_retries` | int | 否 | 最大重试次数（默认: 3） |
 | `retry_delay` | float | 否 | 重试间隔时间（默认: 1 秒），429 时优先使用 Retry-After 头 |
 | `retryable_status_codes` | list | 否 | 可重试的 HTTP 状态码（默认: [429, 500, 502, 503, 504]） |
+| `custom_system_prompt` | text | 否 | 自定义系统提示词（留空使用默认提示词） |
 
 ### 输出设置
 
@@ -62,17 +65,16 @@
 |--------|------|------|------|
 | `show_sources` | bool | 否 | 是否显示来源 URL（默认: false） |
 | `render_as_image` | bool | 否 | 是否将搜索结果渲染为图片卡片（默认: false） |
+| `send_as_forward` | bool | 否 | 将 `/grok` 结果以合并转发发送，仅 OneBot v11/aiocqhttp 支持，其他平台自动降级（默认: false） |
 | `card_theme` | string | 否 | 卡片主题：auto（按时间自动）/ dark / light（默认: auto） |
 | `max_sources` | int | 否 | 最大返回来源数量，0 表示不限制（默认: 5） |
-| `custom_system_prompt` | text | 否 | 自定义系统提示词（留空使用默认提示词） |
 
-### Skill 与 API 模式
+### 工具设置
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | `enable_fetch` | bool | 否 | 启用网页抓取工具（默认: false），关闭时工具不会注册 |
 | `enable_skill` | bool | 否 | 安装 Skill 到 skills 目录（启用后所有 LLM Tool 不会注册） |
-| `use_responses_api` | bool | 否 | 使用 xAI Responses API（仅官方 API 支持，非官方端点兼容性不佳） |
 
 > 工具开关在插件初始化时生效，修改配置后插件会自动重载卸载工具。
 
@@ -85,6 +87,8 @@
 - **Markdown 支持**：标题、列表、代码块、引用、**粗体**、`行内代码`
 - **来源链接**：以单独文本消息发送（可点击/复制）
 
+启用 `send_as_forward` 后，OneBot v11/aiocqhttp 平台会优先将 `/grok` 结果作为合并转发发送。
+
 #### 效果展示
 
 | 深色主题 | 浅色主题 |
@@ -93,7 +97,7 @@
 
 **字体说明**：首次启用时自动从清华镜像下载 Sarasa Term Slab SC 字体。也可在 `data/plugin_data/astrbot_plugin_grok_web_search/font/` 目录放入自定义 `.ttf` 字体文件。
 
-### HTTP 扩展
+### 扩展参数
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|

@@ -19,7 +19,7 @@ import aiohttp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
-from astrbot.core.message.components import Forward, Image, Node, Nodes, Reply
+from astrbot.core.message.components import Forward, Image, Node, Nodes, Plain, Reply
 from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.utils.io import download_image_by_url, file_to_base64
 from astrbot.core.utils.quoted_message.chain_parser import (
@@ -34,6 +34,16 @@ try:
     from astrbot.core.provider.register import llm_tools as _llm_tools_registry
 except ImportError:
     _llm_tools_registry = None
+try:
+    from astrbot.core.utils.quoted_message_parser import (
+        extract_quoted_message_images as _extract_quoted_message_images,
+    )
+    from astrbot.core.utils.quoted_message_parser import (
+        extract_quoted_message_text as _extract_quoted_message_text,
+    )
+except ImportError:
+    _extract_quoted_message_images = None
+    _extract_quoted_message_text = None
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 except ImportError:
@@ -60,6 +70,61 @@ from .tool.tool import (
 )
 
 PLUGIN_NAME = "astrbot_plugin_grok_web_search"
+FORWARD_SENDER_NAME = "Grok搜索助手"
+
+CONFIG_PATHS = {
+    "use_builtin_provider": ("provider_settings", "use_builtin_provider"),
+    "provider": ("provider_settings", "provider"),
+    "model": ("provider_settings", "model"),
+    "use_responses_api": ("provider_settings", "use_responses_api"),
+    "base_url": ("connection_settings", "base_url"),
+    "api_key": ("connection_settings", "api_key"),
+    "timeout_seconds": ("connection_settings", "timeout_seconds"),
+    "reuse_session": ("connection_settings", "reuse_session"),
+    "proxy": ("connection_settings", "proxy"),
+    "enable_thinking": ("request_settings", "enable_thinking"),
+    "thinking_budget": ("request_settings", "thinking_budget"),
+    "max_retries": ("request_settings", "max_retries"),
+    "retry_delay": ("request_settings", "retry_delay"),
+    "retryable_status_codes": ("request_settings", "retryable_status_codes"),
+    "custom_system_prompt": ("request_settings", "custom_system_prompt"),
+    "extra_body": ("advanced_settings", "extra_body"),
+    "extra_headers": ("advanced_settings", "extra_headers"),
+    "show_sources": ("output_settings", "show_sources"),
+    "render_as_image": ("output_settings", "render_as_image"),
+    "send_as_forward": ("output_settings", "send_as_forward"),
+    "card_theme": ("output_settings", "card_theme"),
+    "max_sources": ("output_settings", "max_sources"),
+    "enable_fetch": ("tool_settings", "enable_fetch"),
+    "enable_skill": ("tool_settings", "enable_skill"),
+}
+
+CONFIG_DEFAULTS = {
+    "use_builtin_provider": False,
+    "provider": "",
+    "model": DEFAULT_MODEL,
+    "use_responses_api": False,
+    "base_url": "",
+    "api_key": "",
+    "timeout_seconds": 60,
+    "reuse_session": False,
+    "proxy": "",
+    "enable_thinking": True,
+    "thinking_budget": 32000,
+    "max_retries": 3,
+    "retry_delay": 1.0,
+    "retryable_status_codes": [429, 500, 502, 503, 504],
+    "custom_system_prompt": "",
+    "extra_body": "",
+    "extra_headers": "",
+    "show_sources": False,
+    "render_as_image": False,
+    "send_as_forward": False,
+    "card_theme": "auto",
+    "max_sources": 5,
+    "enable_fetch": False,
+    "enable_skill": False,
+}
 
 
 def _fmt_tokens(n: int) -> str:
@@ -82,14 +147,56 @@ class GrokSearchPlugin(Star):
         self._session: aiohttp.ClientSession | None = None
         self._card_fonts_ready = False
         self._font_init_task: asyncio.Task | None = None
+        self._migrate_legacy_config()
+
+    def _cfg(self, key: str, default=None):
+        path = CONFIG_PATHS.get(key)
+        if path:
+            section = self.config.get(path[0], {})
+            if isinstance(section, dict) and path[1] in section:
+                return section[path[1]]
+        return self.config.get(key, default)
+
+    def _migrate_legacy_config(self) -> None:
+        """Move old flat config values into the grouped schema once."""
+        changed = False
+        for key, path in CONFIG_PATHS.items():
+            if key not in self.config:
+                continue
+
+            default = CONFIG_DEFAULTS.get(key)
+            legacy_value = self.config.get(key)
+            if legacy_value == default:
+                continue
+
+            section = self.config.get(path[0])
+            if not isinstance(section, dict):
+                section = {}
+                self.config[path[0]] = section
+
+            current_value = section.get(path[1], default)
+            if current_value != default:
+                continue
+
+            section[path[1]] = legacy_value
+            self.config[key] = list(default) if isinstance(default, list) else default
+            changed = True
+
+        save_config = getattr(self.config, "save_config", None)
+        if changed and callable(save_config):
+            try:
+                save_config()
+                logger.info(f"[{PLUGIN_NAME}] 已迁移旧版平铺配置到新版分组配置")
+            except Exception as e:
+                logger.warning(f"[{PLUGIN_NAME}] 保存迁移后的配置失败: {e}")
 
     async def _extract_content_from_event(
         self, event: AstrMessageEvent
     ) -> tuple[str | None, list[str]]:
         """Extract text and images from the user's message.
 
-        Reuses AstrBot core's chain_parser for text/image extraction from
-        Reply, Node, Nodes, Forward, etc.
+        Prefer AstrBot core's public quoted_message_parser for Reply/forward
+        fallback parsing. Older cores fall back to chain_parser helpers.
 
         Returns:
             A tuple of (text, images):
@@ -97,49 +204,74 @@ class GrokSearchPlugin(Star):
             - images: list of base64-encoded image strings (without prefix)
         """
         chain = event.get_messages()
+        text: str | None = None
+        image_refs: list[str] = []
 
-        # 使用本体的 chain_parser 提取文本（处理 Reply/Node/Nodes/Forward）
-        text = _extract_text_from_component_chain(chain)
+        use_legacy_parser = True
+        if (
+            _extract_quoted_message_text is not None
+            and _extract_quoted_message_images is not None
+        ):
+            try:
+                text = await _extract_quoted_message_text(event)
+                image_refs = await _extract_quoted_message_images(event)
+                use_legacy_parser = not text and not image_refs
+            except Exception as e:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] quoted_message_parser failed, falling back to chain_parser: {e}"
+                )
 
-        # 使用本体的 chain_parser 提取图片引用，再转为 base64
-        image_refs = _extract_image_refs_from_component_chain(chain)
+        if use_legacy_parser:
+            text = _extract_text_from_component_chain(chain)
+            image_refs = _extract_image_refs_from_component_chain(chain)
+
         images: list[str] = []
         seen: set[str] = set()
 
         # 提取消息链顶层的 Image 组件并转为 base64
         for comp in chain:
             if isinstance(comp, Image):
-                try:
-                    b64 = await comp.convert_to_base64()
-                    if b64 and b64 not in seen:
-                        seen.add(b64)
-                        images.append(b64)
-                except Exception as e:
-                    logger.warning(
-                        f"[{PLUGIN_NAME}] Failed to convert image to base64: {e}"
-                    )
+                await self._append_image_base64(comp, images, seen)
 
         # 将嵌套组件中的图片引用（URL/路径）转为 base64
         for ref in image_refs:
-            try:
-                img = Image.fromURL(ref)
-                b64 = await img.convert_to_base64()
-                if b64 and b64 not in seen:
-                    seen.add(b64)
-                    images.append(b64)
-            except Exception as e:
-                logger.warning(
-                    f"[{PLUGIN_NAME}] Failed to convert image ref to base64: {e}"
-                )
+            await self._append_image_base64(ref, images, seen)
 
         return text, images
+
+    async def _append_image_base64(
+        self,
+        image: Image | str,
+        images: list[str],
+        seen: set[str],
+    ) -> None:
+        try:
+            if isinstance(image, Image):
+                b64 = await image.convert_to_base64()
+            else:
+                image_ref = image.strip()
+                if image_ref.startswith("base64://"):
+                    b64 = image_ref.removeprefix("base64://")
+                elif image_ref.startswith("data:image/"):
+                    b64 = image_ref.split(",", 1)[1] if "," in image_ref else ""
+                elif image_ref.startswith(("http://", "https://")):
+                    b64 = await Image.fromURL(image_ref).convert_to_base64()
+                else:
+                    b64 = await Image(file=image_ref).convert_to_base64()
+
+            b64 = b64.removeprefix("base64://")
+            if b64 and b64 not in seen:
+                seen.add(b64)
+                images.append(b64)
+        except Exception as e:
+            logger.warning(f"[{PLUGIN_NAME}] Failed to convert image to base64: {e}")
 
     def _unregister_disabled_tools(self):
         """根据配置在初始化时直接卸载不需要的 LLM Tool，避免 AI 看到无用工具"""
         if _llm_tools_registry is None:
             return
 
-        if self.config.get("enable_skill", False):
+        if self._cfg("enable_skill", False):
             # Skill 接管，移除所有 LLM Tool
             _llm_tools_registry.remove_func("grok_web_search")
             _llm_tools_registry.remove_func("grok_web_fetch")
@@ -148,7 +280,7 @@ class GrokSearchPlugin(Star):
             )
             return
 
-        if not self.config.get("enable_fetch", False):
+        if not self._cfg("enable_fetch", False):
             _llm_tools_registry.remove_func("grok_web_fetch")
             logger.info(f"[{PLUGIN_NAME}] 网页抓取未启用，已卸载 grok_web_fetch 工具")
 
@@ -158,7 +290,7 @@ class GrokSearchPlugin(Star):
         try:
             from .tool import font_loader
 
-            font_loader.set_proxy(self.config.get("proxy", "") or None)
+            font_loader.set_proxy(self._cfg("proxy", "") or None)
             if get_astrbot_data_path:
                 font_dir = str(
                     Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME / "font"
@@ -176,7 +308,7 @@ class GrokSearchPlugin(Star):
     async def initialize(self):
         """插件初始化：验证配置并处理 Skill 安装"""
         # 在后台初始化字体，仅在开启图片渲染模式下
-        if self.config.get("render_as_image", False):
+        if self._cfg("render_as_image", False):
             set_card_logger(logger)
             self._font_init_task = asyncio.create_task(
                 asyncio.to_thread(self._init_fonts)
@@ -186,7 +318,7 @@ class GrokSearchPlugin(Star):
         self._unregister_disabled_tools()
 
         # 如果启用使用 AstrBot 自带供应商，则推迟创建会话和 Skill 安装
-        if self.config.get("use_builtin_provider", False):
+        if self._cfg("use_builtin_provider", False):
             logger.info(
                 f"[{PLUGIN_NAME}] use_builtin_provider enabled, delaying full initialization until AstrBot is loaded"
             )
@@ -196,21 +328,21 @@ class GrokSearchPlugin(Star):
         await self._validate_config()
 
         # 根据配置决定是否创建复用的 HTTP 会话
-        if self.config.get("reuse_session", False):
+        if self._cfg("reuse_session", False):
             self._session = aiohttp.ClientSession()
 
         # 首次安装：将插件目录的 skill 移动到持久化目录
         self._migrate_skill_to_persistent()
 
-        if self.config.get("enable_skill", False):
+        if self._cfg("enable_skill", False):
             self._install_skill()
         else:
             self._uninstall_skill()
 
     async def _validate_config(self):
         """验证必要配置，并通过 v1/models 接口检查连通性"""
-        base_url = normalize_base_url(self.config.get("base_url", ""))
-        api_key = normalize_api_key(self.config.get("api_key", ""))
+        base_url = normalize_base_url(self._cfg("base_url", ""))
+        api_key = normalize_api_key(self._cfg("api_key", ""))
         if not base_url:
             logger.warning(
                 f"[{PLUGIN_NAME}] 缺少 base_url 配置，请在插件设置中填写 Grok API 端点"
@@ -228,7 +360,7 @@ class GrokSearchPlugin(Star):
         headers = build_headers(api_key, extra_headers or None)
 
         # 获取代理配置
-        proxy = self.config.get("proxy", "").strip() or None
+        proxy = self._cfg("proxy", "").strip() or None
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -363,7 +495,7 @@ class GrokSearchPlugin(Star):
 
     def _parse_json_config(self, key: str) -> dict:
         """解析 JSON 格式的配置项"""
-        value = self.config.get(key, "")
+        value = self._cfg(key, "")
         if isinstance(value, dict):
             return value
         if isinstance(value, str):
@@ -390,7 +522,7 @@ class GrokSearchPlugin(Star):
         """
         # 安全解析 timeout 配置
         timeout = safe_number(
-            self.config.get("timeout_seconds", 60),
+            self._cfg("timeout_seconds", 60),
             60.0,
             cast=float,
             min_val=0.001,
@@ -398,7 +530,7 @@ class GrokSearchPlugin(Star):
 
         # 安全解析 thinking_budget 配置
         thinking_budget = safe_number(
-            self.config.get("thinking_budget", 32000),
+            self._cfg("thinking_budget", 32000),
             32000,
             cast=int,
             min_val=0,
@@ -409,22 +541,22 @@ class GrokSearchPlugin(Star):
         retry_delay = 1.0
         retryable_status_codes = None
         if use_retry:
-            max_retries = self.config.get("max_retries", 3)
-            retry_delay = self.config.get("retry_delay", 1.0)
+            max_retries = self._cfg("max_retries", 3)
+            retry_delay = self._cfg("retry_delay", 1.0)
 
             # 解析可重试状态码（直接从 list 类型配置获取）
-            retryable_codes = self.config.get("retryable_status_codes", [])
+            retryable_codes = self._cfg("retryable_status_codes", [])
             if retryable_codes and isinstance(retryable_codes, list):
                 retryable_status_codes = set(retryable_codes)
 
         # 自定义系统提示词（传入优先，其次配置，最后默认 JSON 提示词）
         if system_prompt is None:
             system_prompt = resolve_system_prompt(
-                self.config.get("custom_system_prompt", ""),
+                self._cfg("custom_system_prompt", ""),
                 DEFAULT_JSON_SYSTEM_PROMPT,
             )
 
-        if self.config.get("use_builtin_provider", False):
+        if self._cfg("use_builtin_provider", False):
             return await self._do_search_via_builtin_provider(
                 query=query,
                 system_prompt=system_prompt,
@@ -461,7 +593,7 @@ class GrokSearchPlugin(Star):
         while True:
             try:
                 # 严格按配置获取 provider
-                configured_provider_id = self.config.get("provider", "")
+                configured_provider_id = self._cfg("provider", "")
                 if not configured_provider_id:
                     return {
                         "ok": False,
@@ -561,12 +693,12 @@ class GrokSearchPlugin(Star):
     ) -> dict:
         """通过外部 Grok HTTP API 执行搜索。"""
         try:
-            proxy = self.config.get("proxy", "").strip() or None
+            proxy = self._cfg("proxy", "").strip() or None
             common_kwargs = {
                 "query": query,
-                "base_url": self.config.get("base_url", ""),
-                "api_key": self.config.get("api_key", ""),
-                "model": self.config.get("model", DEFAULT_MODEL),
+                "base_url": self._cfg("base_url", ""),
+                "api_key": self._cfg("api_key", ""),
+                "model": self._cfg("model", DEFAULT_MODEL),
                 "timeout": timeout,
                 "extra_body": self._parse_json_config("extra_body"),
                 "extra_headers": self._parse_json_config("extra_headers"),
@@ -579,11 +711,11 @@ class GrokSearchPlugin(Star):
                 "proxy": proxy,
             }
 
-            if self.config.get("use_responses_api", False):
+            if self._cfg("use_responses_api", False):
                 result = await grok_responses_search(**common_kwargs)
             else:
                 result = await grok_search(
-                    enable_thinking=self.config.get("enable_thinking", True),
+                    enable_thinking=self._cfg("enable_thinking", True),
                     thinking_budget=thinking_budget,
                     **common_kwargs,
                 )
@@ -605,9 +737,9 @@ class GrokSearchPlugin(Star):
         with_snippet: bool,
     ) -> list[str]:
         """渲染来源列表，遵循 show_sources / max_sources 配置。"""
-        if not self.config.get("show_sources", False) or not sources:
+        if not self._cfg("show_sources", False) or not sources:
             return []
-        max_sources = self.config.get("max_sources", 5)
+        max_sources = self._cfg("max_sources", 5)
         if max_sources > 0:
             sources = sources[:max_sources]
         lines = [f"\n{header}:"]
@@ -681,23 +813,24 @@ class GrokSearchPlugin(Star):
         """从文本中提取 URL 作为来源，仅允许 http/https 协议"""
         return [{"url": url, "title": "", "snippet": ""} for url in extract_urls(text)]
 
+    def _supports_forward_output(self, event: AstrMessageEvent) -> bool:
+        return event.get_platform_name() == "aiocqhttp" and bool(event.get_self_id())
+
     def _help_text(self) -> str:
         """返回帮助文本"""
-        use_builtin = self.config.get("use_builtin_provider", False)
+        use_builtin = self._cfg("use_builtin_provider", False)
         mode = "AstrBot 自带" if use_builtin else "自定义"
         provider_id = (
-            (self.config.get("provider", "") or "未配置")
+            (self._cfg("provider", "") or "未配置")
             if use_builtin
-            else (self.config.get("base_url", "") or "未配置")
+            else (self._cfg("base_url", "") or "未配置")
         )
         model = (
             "由供应商决定"
             if use_builtin
-            else (self.config.get("model", DEFAULT_MODEL) or "默认")
+            else (self._cfg("model", DEFAULT_MODEL) or "默认")
         )
-        has_custom_prompt = bool(
-            (self.config.get("custom_system_prompt", "") or "").strip()
-        )
+        has_custom_prompt = bool((self._cfg("custom_system_prompt", "") or "").strip())
         if has_custom_prompt:
             prompt_info = "自定义"
         else:
@@ -735,7 +868,7 @@ class GrokSearchPlugin(Star):
         )
 
     @filter.command("grok")
-    async def grok_cmd(self, event: AstrMessageEvent, query: GreedyStr = ""):
+    async def grok_cmd(self, event: AstrMessageEvent, query: GreedyStr):
         """执行 Grok 搜索
 
         用法: /grok <搜索内容>
@@ -776,7 +909,7 @@ class GrokSearchPlugin(Star):
 
         # 优先使用自定义提示词，未设置则使用内置提示词（英文指令 + JSON 格式 + 中文回复）
         cmd_system_prompt = resolve_system_prompt(
-            self.config.get("custom_system_prompt", ""),
+            self._cfg("custom_system_prompt", ""),
             (
                 "You are a web research assistant. Use live web search/browsing when answering. "
                 "Return ONLY a single JSON object with keys: "
@@ -795,8 +928,13 @@ class GrokSearchPlugin(Star):
         )
         event.should_call_llm(True)
 
+        if self._cfg("send_as_forward", False):
+            forward_sent = await self._send_as_forward(event, result)
+            if forward_sent:
+                return
+
         # 判断是否以图片卡片形式发送
-        use_image = self.config.get("render_as_image", False) and self._card_fonts_ready
+        use_image = self._cfg("render_as_image", False) and self._card_fonts_ready
         image_sent = False
 
         if use_image and result.get("ok"):
@@ -809,6 +947,72 @@ class GrokSearchPlugin(Star):
             except Exception as e:
                 logger.warning(f"[{PLUGIN_NAME}] 发送搜索结果失败: {e}")
 
+    async def _send_as_forward(self, event: AstrMessageEvent, result: dict) -> bool:
+        """使用 OneBot 合并转发发送 /grok 结果。非 OneBot 平台自动降级。"""
+        if not self._supports_forward_output(event):
+            return False
+
+        sender_uin = event.get_self_id()
+        nodes: list[Node] = []
+
+        use_image = (
+            self._cfg("render_as_image", False)
+            and self._card_fonts_ready
+            and result.get("ok")
+        )
+        tmp_path: str | None = None
+        try:
+            if use_image:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = tmp.name
+                render_search_card(
+                    content=result.get("content", ""),
+                    model=self._cfg("model", ""),
+                    elapsed_ms=result.get("elapsed_ms", 0),
+                    total_tokens=(result.get("usage") or {}).get("total_tokens", 0),
+                    output_path=tmp_path,
+                    theme=self._cfg("card_theme", "auto"),
+                )
+                nodes.append(
+                    Node(
+                        uin=sender_uin,
+                        name=FORWARD_SENDER_NAME,
+                        content=[Image.fromFileSystem(tmp_path)],
+                    )
+                )
+            else:
+                nodes.append(
+                    Node(
+                        uin=sender_uin,
+                        name=FORWARD_SENDER_NAME,
+                        content=[Plain(self._format_result(result))],
+                    )
+                )
+
+            if use_image:
+                src_lines = self._render_sources(
+                    result.get("sources", []),
+                    header="来源",
+                    with_snippet=False,
+                )
+                if src_lines:
+                    nodes.append(
+                        Node(
+                            uin=sender_uin,
+                            name=FORWARD_SENDER_NAME,
+                            content=[Plain("\n".join(src_lines).lstrip("\n"))],
+                        )
+                    )
+
+            await event.send(MessageChain([Nodes(nodes)]))
+            return True
+        except Exception as e:
+            logger.warning(f"[{PLUGIN_NAME}] 合并转发发送失败，降级为普通发送: {e}")
+            return False
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+
     async def _send_as_image_card(self, event: AstrMessageEvent, result: dict) -> bool:
         """将搜索结果渲染为图片卡片并发送，附带文本来源链接。
 
@@ -820,8 +1024,8 @@ class GrokSearchPlugin(Star):
         elapsed = result.get("elapsed_ms", 0)
         usage = result.get("usage") or {}
         total_tokens = usage.get("total_tokens", 0)
-        model = self.config.get("model", "")
-        theme = self.config.get("card_theme", "auto")
+        model = self._cfg("model", "")
+        theme = self._cfg("card_theme", "auto")
 
         tmp_path: str | None = None
         image_sent = False
@@ -944,14 +1148,14 @@ class GrokSearchPlugin(Star):
         if not url or not url.startswith("http"):
             return "错误：请提供完整的 HTTP/HTTPS URL"
 
-        base_url = self.config.get("base_url", "")
-        api_key = self.config.get("api_key", "")
-        model = self.config.get("model", DEFAULT_MODEL)
-        timeout = self.config.get("timeout_seconds", 60)
-        proxy = self.config.get("proxy", "") or None
+        base_url = self._cfg("base_url", "")
+        api_key = self._cfg("api_key", "")
+        model = self._cfg("model", DEFAULT_MODEL)
+        timeout = self._cfg("timeout_seconds", 60)
+        proxy = self._cfg("proxy", "") or None
 
-        extra_body_str = self.config.get("extra_body", "")
-        extra_headers_str = self.config.get("extra_headers", "")
+        extra_body_str = self._cfg("extra_body", "")
+        extra_headers_str = self._cfg("extra_headers", "")
         extra_body, _ = parse_json_config(extra_body_str)
         extra_headers, _ = parse_json_config(extra_headers_str)
 
@@ -980,20 +1184,20 @@ class GrokSearchPlugin(Star):
     async def on_astrbot_loaded(self):
         """当 AstrBot 初始化完成后执行的钩子：在启用了自带供应商时完成插件的剩余初始化工作"""
         try:
-            if not self.config.get("use_builtin_provider", False):
+            if not self._cfg("use_builtin_provider", False):
                 return
 
             logger.info(f"[{PLUGIN_NAME}] AstrBot 已初始化，继续完成插件初始化")
 
             # 创建复用的 HTTP 会话（如果配置要求）
-            if self.config.get("reuse_session", False) and (
+            if self._cfg("reuse_session", False) and (
                 self._session is None or self._session.closed
             ):
                 self._session = aiohttp.ClientSession()
 
             # 迁移并根据 enable_skill 安装或卸载 Skill
             self._migrate_skill_to_persistent()
-            if self.config.get("enable_skill", False):
+            if self._cfg("enable_skill", False):
                 self._install_skill()
             else:
                 self._uninstall_skill()
